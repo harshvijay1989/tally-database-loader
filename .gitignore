@@ -10,4 +10,5 @@ error-log.txt
 *.exe
 *.duckdb
 bigquery-credentials.json
+salesforce-credentials.json
 adls-config.json
