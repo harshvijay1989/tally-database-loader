@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tally → Salesforce Connector</title>
+<style>
+  :root{
+    --bg:#0f172a; --canvas:#f1f5f9; --card:#ffffff; --line:#e2e8f0; --line2:#eef2f7;
+    --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --accent:#4f46e5; --accent-d:#4338ca; --tally:#d97706; --sf:#0176d3;
+    --ok:#16a34a; --okbg:#dcfce7; --shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.06);
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);background:var(--canvas);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+  /* ---- top bar ---- */
+  .appbar{height:60px;flex:0 0 60px;background:var(--card);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;padding:0 22px;z-index:5}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:650;font-size:15px;letter-spacing:-.01em}
+  .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--tally),var(--sf));
+    display:grid;place-items:center;color:#fff;font-size:15px;box-shadow:var(--shadow)}
+  .brand small{color:var(--faint);font-weight:500;margin-left:2px}
+  .appbar-right{display:flex;align-items:center;gap:12px}
+  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);
+    background:#f8fafc;border:1px solid var(--line);padding:6px 12px;border-radius:20px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  .status.on{color:var(--ink2)} .status.on .dot{background:var(--ok);box-shadow:0 0 0 3px var(--okbg)}
+
+  button{font:inherit;font-weight:550;border:1px solid transparent;border-radius:9px;padding:9px 16px;cursor:pointer;
+    background:var(--accent);color:#fff;transition:.15s;box-shadow:var(--shadow)}
+  button:hover{background:var(--accent-d)}
+  button.ghost{background:var(--card);color:var(--ink2);border-color:var(--line)}
+  button.ghost:hover{background:#f8fafc}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.big{padding:13px 26px;font-size:15px;border-radius:11px}
+
+  /* ---- hero (disconnected) ---- */
+  .hero{flex:1;display:grid;place-items:center;
+    background:radial-gradient(1200px 600px at 50% -10%,#e0e7ff 0,transparent 60%),var(--canvas)}
+  .hero-card{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);
+    padding:48px 46px;max-width:520px;text-align:center}
+  .hero-card .logo{width:56px;height:56px;border-radius:16px;font-size:26px;margin:0 auto 20px}
+  .hero-card h1{font-size:24px;margin:0 0 10px;letter-spacing:-.02em}
+  .hero-card p{color:var(--muted);margin:0 0 26px;font-size:15px}
+  .hero-steps{display:flex;gap:8px;justify-content:center;margin-top:28px;color:var(--faint);font-size:12.5px;flex-wrap:wrap}
+  .hero-steps span{background:#f8fafc;border:1px solid var(--line);padding:5px 11px;border-radius:8px}
+
+  /* ---- workspace (connected) ---- */
+  .workspace{flex:1;display:flex;flex-direction:column;min-height:0}
+  .toolbar{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--line);
+    padding:14px 22px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .fieldset{display:flex;flex-direction:column;gap:5px}
+  .fieldset label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+  select{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);
+    min-width:210px;cursor:pointer;transition:.15s}
+  select:hover{border-color:#cbd5e1} select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
+  .flow-arrow{align-self:center;color:var(--faint);font-size:20px;padding-bottom:6px}
+  .toolbar .spacer{flex:1}
+  .savemsg{font-size:13px;color:var(--ok);font-weight:550;align-self:center}
+
+  .filterbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:11px 22px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:13px;flex-wrap:wrap}
+  .filterbar .flabel{font-weight:700;color:var(--tally);text-transform:uppercase;font-size:11px;letter-spacing:.05em}
+  .filterbar .muted{color:#92702a}
+  .filterbar select{min-width:150px;padding:7px 9px}
+  .filterbar input{padding:7px 10px;border:1px solid #fde68a;border-radius:8px;font:inherit;min-width:170px;background:#fff}
+  .filterbar input:focus{outline:none;border-color:var(--tally);box-shadow:0 0 0 3px #fef3c7}
+
+  .panes{flex:1;display:grid;grid-template-columns:340px 1fr;min-height:0}
+  .pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .pane.source{border-right:1px solid var(--line);background:#fff}
+  .pane.map{background:var(--canvas)}
+  .pane-head{flex:0 0 auto;padding:14px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:10px}
+  .pane-head .chip{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:6px}
+  .chip.tally{color:var(--tally);background:#fef3c7} .chip.sf{color:var(--sf);background:#e0effd}
+  .pane-head h3{margin:0;font-size:14px;font-weight:600}
+  .pane-head .count{margin-left:auto;color:var(--faint);font-size:12px}
+  .pane-search{flex:0 0 auto;padding:10px 20px;border-bottom:1px solid var(--line2)}
+  .pane.map .pane-search{background:transparent}
+  .search{width:100%;padding:8px 12px 8px 32px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") 10px center no-repeat}
+  .search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
+  .pane-body{flex:1;overflow:auto;padding:14px 20px}
+
+  /* source field list */
+  .srcfield{display:flex;align-items:baseline;gap:10px;padding:8px 10px;border-radius:8px}
+  .srcfield:hover{background:#f8fafc}
+  .srcfield .n{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--ink2)}
+  .srcfield .meta{margin-left:auto;color:var(--faint);font-size:11.5px}
+
+  /* mapping rows */
+  .maprow{display:grid;grid-template-columns:1fr 34px 1fr;align-items:center;gap:12px;
+    background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+  .maprow.req{border-left:3px solid var(--sf)}
+  .maprow .tgt{display:flex;flex-direction:column;gap:2px}
+  .maprow .tgt .lbl{font-weight:600;font-size:13.5px}
+  .maprow .tgt .api{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)}
+  .maprow .arrow{text-align:center;color:var(--faint);font-size:16px}
+  .maprow select{min-width:0;width:100%}
+  .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px;vertical-align:middle}
+  .badge.ext{color:var(--accent);background:#eef2ff} .badge.req{color:#b42318;background:#fee4e2}
+  .maphint{color:var(--muted);text-align:center;margin-top:60px;font-size:14px}
+  .maphint .big{font-size:34px;margin-bottom:10px;opacity:.4}
+
+  button.sync{background:var(--ok)} button.sync:hover{background:#15803d}
+  .modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:grid;place-items:center;z-index:50}
+  .modal-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:560px;max-width:92vw;max-height:82vh;overflow:auto;padding:26px}
+  .modal-card h3{margin:0 0 16px;font-size:18px}
+  .resrow{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+  .resrow .head{font-weight:600;margin-bottom:6px}
+  .resrow .ok{color:var(--ok);font-weight:600} .resrow .err{color:#b42318}
+  .resrow ul{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:#b42318}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .hidden{display:none!important}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px;border:2px solid var(--canvas)}
+  .pane.source ::-webkit-scrollbar-thumb{border-color:#fff}
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <div class="brand"><span class="logo">⚡</span> Tally <small>→</small> Salesforce Connector</div>
+  <div class="appbar-right">
+    <span id="status" class="status"><span class="dot"></span><span id="statusText">Not connected</span></span>
+    <button id="connectBtn" onclick="connectSf()">Connect to Salesforce</button>
+    <button id="disconnectBtn" class="ghost hidden" onclick="disconnect()">Disconnect</button>
+  </div>
+</div>
+
+<!-- disconnected -->
+<div id="hero" class="hero">
+  <div class="hero-card">
+    <div class="logo">⚡</div>
+    <h1>Connect your Salesforce org</h1>
+    <p>Log in through Salesforce in your browser — no tokens, keys, or secrets to paste. You just approve access, and we take it from there.</p>
+    <button class="big" onclick="connectSf()">Connect to Salesforce</button>
+    <div class="hero-steps"><span>1 · Log in</span><span>2 · Pick a Tally table</span><span>3 · Pick a Salesforce object</span><span>4 · Map fields</span></div>
+  </div>
+</div>
+
+<!-- connected -->
+<div id="app" class="workspace hidden">
+  <div class="toolbar">
+    <div class="fieldset"><label>Source · Tally table</label><select id="tallyTable" onchange="showTallyFields()"></select></div>
+    <div class="flow-arrow">→</div>
+    <div class="fieldset"><label>Target · Salesforce object</label><select id="sfObject" onchange="loadSfFields()"><option value="">Loading…</option></select></div>
+    <div class="fieldset"><label>External ID (upsert key)</label><select id="externalId"></select></div>
+    <div class="spacer"></div>
+    <span id="saveMsg" class="savemsg"></span>
+    <button id="clearBtn" class="ghost" onclick="clearMapping()" disabled>Clear mapping</button>
+    <button id="saveBtn" onclick="saveMapping()" disabled>Save mapping</button>
+    <button id="syncBtn" class="sync" onclick="runSync()">▶ Sync to Salesforce</button>
+  </div>
+
+  <div class="filterbar">
+    <span class="flabel">Filter</span>
+    <span class="muted">sync only rows where</span>
+    <select id="filterField"><option value="">— all rows (no filter) —</option></select>
+    <select id="filterOp">
+      <option value="==">equals</option>
+      <option value="!=">does not equal</option>
+      <option value=">">greater than</option>
+      <option value=">=">at least</option>
+      <option value="<">less than</option>
+      <option value="<=">at most</option>
+    </select>
+    <input id="filterValue" placeholder="value — e.g. Sales" />
+  </div>
+
+  <div class="panes">
+    <div class="pane source">
+      <div class="pane-head"><span class="chip tally">Tally</span><h3 id="srcTitle">Source fields</h3><span class="count" id="srcCount"></span></div>
+      <div class="pane-search"><input id="srcSearch" class="search" placeholder="Search Tally fields…" oninput="filterSrc()"></div>
+      <div class="pane-body" id="tallyFields"></div>
+    </div>
+    <div class="pane map">
+      <div class="pane-head"><span class="chip sf">Salesforce</span><h3 id="mapTitle">Field mapping</h3><span class="count" id="mapCount"></span></div>
+      <div class="pane-search hidden" id="mapSearchBar"><input id="mapSearch" class="search" placeholder="Search Salesforce fields…" oninput="filterMap()"></div>
+      <div class="pane-body" id="mapBody">
+        <div class="maphint" id="mapHint"><div class="big">🔗</div>Choose a Salesforce object to start mapping fields.</div>
+        <div id="mapRows" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="runModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal-card">
+    <h3 id="runTitle">Sync results</h3>
+    <div id="runResults"></div>
+    <div style="text-align:right;margin-top:8px"><button class="ghost" onclick="document.getElementById('runModal').classList.add('hidden')">Close</button></div>
+  </div>
+</div>
+
+<script>
+let tallyTables = [], sfFields = [];
+
+async function runSync(){
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Syncing…';
+  document.getElementById('runTitle').textContent = 'Syncing to Salesforce…';
+  document.getElementById('runResults').innerHTML = '<p style="color:#64748b">Extracting from Tally, mapping, and upserting… this can take a few seconds.</p>';
+  document.getElementById('runModal').classList.remove('hidden');
+  let data;
+  try { data = await (await fetch('/api/run',{method:'POST'})).json(); }
+  catch(e){ data = { error:String(e) }; }
+  btn.disabled = false; btn.innerHTML = '▶ Sync to Salesforce';
+  showResults(data);
+}
+function showResults(data){
+  document.getElementById('runTitle').textContent = 'Sync results';
+  const box = document.getElementById('runResults');
+  if(data.error){ box.innerHTML = `<p class="err">⚠ ${data.error}</p>`; return; }
+  const rows = data.results || [];
+  if(!rows.length){ box.innerHTML = '<p>Nothing to sync — is a mapping saved?</p>'; return; }
+  box.innerHTML = rows.map(r=>`<div class="resrow">
+    <div class="head">${r.sourceObject} → ${r.targetObject}</div>
+    <div><span class="ok">✓ ${r.success} upserted</span>${r.failed?` · <span class="err">${r.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${r.total})</span></div>
+    ${(r.errors&&r.errors.length)?`<ul>${r.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}
+  </div>`).join('');
+}
+
+async function init(){
+  const s = await (await fetch('/api/session')).json();
+  const on = s.connected;
+  document.getElementById('statusText').textContent = on ? ('Connected · ' + (s.user||'')) : 'Not connected';
+  document.getElementById('status').className = 'status' + (on?' on':'');
+  document.getElementById('connectBtn').classList.toggle('hidden', on);
+  document.getElementById('disconnectBtn').classList.toggle('hidden', !on);
+  document.getElementById('hero').classList.toggle('hidden', on);
+  document.getElementById('app').classList.toggle('hidden', !on);
+  if(on){ await loadTally(); await loadSfObjects(); }
+}
+async function connectSf(){
+  const st = document.getElementById('statusText');
+  document.getElementById('connectBtn').disabled = true;
+  st.textContent = 'Opening Salesforce login…';
+  try { await fetch('/api/connect', { method:'POST' }); } catch(e){}
+  document.getElementById('connectBtn').disabled = false;
+  await init();
+}
+async function disconnect(){ await fetch('/api/disconnect'); location.reload(); }
+
+function filterSrc(){
+  const q = document.getElementById('srcSearch').value.toLowerCase();
+  document.querySelectorAll('#tallyFields .srcfield').forEach(el=>{ el.style.display = el.textContent.toLowerCase().includes(q)?'':'none'; });
+}
+function filterMap(){
+  const q = document.getElementById('mapSearch').value.toLowerCase();
+  document.querySelectorAll('#mapRows .maprow').forEach(el=>{ el.style.display = (el.dataset.name||'').includes(q)?'':'none'; });
+}
+function clearMapping(){
+  document.querySelectorAll('#mapRows select').forEach(s=> s.value='');
+  const m = document.getElementById('saveMsg'); m.textContent='Cleared'; setTimeout(()=>m.textContent='', 1500);
+}
+
+async function loadTally(){
+  const d = await (await fetch('/api/tally/tables')).json();
+  tallyTables = d.tables;
+  document.getElementById('tallyTable').innerHTML =
+    tallyTables.map(t=>`<option value="${t.name}">${t.name}${t.isMaster?'  · master':''}</option>`).join('');
+  showTallyFields();
+}
+function curTable(){ return tallyTables.find(t=>t.name===document.getElementById('tallyTable').value); }
+function showTallyFields(){
+  const t = curTable(); if(!t) return;
+  document.getElementById('srcTitle').textContent = t.name;
+  document.getElementById('srcCount').textContent = t.fields.length + ' fields';
+  document.getElementById('tallyFields').innerHTML = t.fields.map(f=>
+    `<div class="srcfield"><span class="n">${f.name}</span><span class="meta">${f.datatype}</span></div>`).join('');
+  document.getElementById('filterField').innerHTML = '<option value="">— all rows (no filter) —</option>' +
+    t.fields.map(f=>`<option value="${f.name}">${f.name}</option>`).join('');
+  document.getElementById('filterValue').value = '';
+  filterSrc();
+  buildMap();
+}
+
+async function loadSfObjects(){
+  const d = await (await fetch('/api/salesforce/objects')).json();
+  if(d.error){ document.getElementById('sfObject').innerHTML='<option>— reconnect —</option>'; return; }
+  document.getElementById('sfObject').innerHTML = '<option value="">— choose object —</option>' +
+    d.objects.map(o=>`<option value="${o.name}">${o.label} · ${o.name}</option>`).join('');
+}
+async function loadSfFields(){
+  const name = document.getElementById('sfObject').value;
+  if(!name){ sfFields=[]; buildMap(); return; }
+  document.getElementById('mapTitle').textContent = 'Field mapping';
+  const d = await (await fetch('/api/salesforce/object/'+encodeURIComponent(name))).json();
+  sfFields = d.fields;
+  const extIds = sfFields.filter(f=>f.externalId||f.idLookup);
+  document.getElementById('externalId').innerHTML =
+    (extIds.length?extIds:sfFields).map(f=>`<option value="${f.name}"${f.externalId?' selected':''}>${f.name}${f.externalId?' (external id)':''}</option>`).join('');
+  buildMap();
+}
+
+function buildMap(){
+  const t = curTable(); const obj = document.getElementById('sfObject').value;
+  const ready = t && sfFields.length && obj;
+  document.getElementById('mapHint').classList.toggle('hidden', ready);
+  document.getElementById('mapRows').classList.toggle('hidden', !ready);
+  document.getElementById('mapSearchBar').classList.toggle('hidden', !ready);
+  document.getElementById('saveBtn').disabled = !ready;
+  document.getElementById('clearBtn').disabled = !ready;
+  if(!ready) return;
+  document.getElementById('mapTitle').textContent = obj;
+  document.getElementById('mapSearch').value = '';
+  const targets = sfFields.filter(f=>f.createable);
+  document.getElementById('mapCount').textContent = targets.length + ' fields';
+  const opts = f => '<option value="">— not mapped —</option>' + t.fields.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+  document.getElementById('mapRows').innerHTML = targets.map(tf=>{
+    const guess = t.fields.find(s=>s.name.toLowerCase()===tf.name.toLowerCase().replace(/__c$/,''));
+    let sel = opts(tf);
+    if(guess) sel = sel.replace(`value="${guess.name}"`, `value="${guess.name}" selected`);
+    return `<div class="maprow${tf.required?' req':''}" data-name="${(tf.label+' '+tf.name).toLowerCase()}">
+      <select data-target="${tf.name}">${sel}</select>
+      <div class="arrow">→</div>
+      <div class="tgt"><div class="lbl">${tf.label}${tf.required?' <span class="badge req">required</span>':''}${tf.externalId?' <span class="badge ext">ext id</span>':''}</div><div class="api">${tf.name} · ${tf.type}</div></div>
+    </div>`;
+  }).join('');
+}
+
+async function saveMapping(){
+  const t = curTable();
+  const rows = [...document.querySelectorAll('#mapRows select')].filter(s=>s.value).map(s=>({source:s.value,target:s.dataset.target}));
+  const ff = document.getElementById('filterField').value;
+  const om = { sourceObject:t.name, targetObject:document.getElementById('sfObject').value,
+    externalIdField:document.getElementById('externalId').value, fields:rows };
+  if(ff) om.filter = { field:ff, operator:document.getElementById('filterOp').value, value:document.getElementById('filterValue').value };
+  const mapping = { objectMappings:[om] };
+  await fetch('/api/mapping/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mapping,null,2)});
+  const m = document.getElementById('saveMsg'); m.textContent = '✓ Saved '+rows.length+' mappings';
+  setTimeout(()=>m.textContent='', 3000);
+}
+
+init();
+</script>
+</body>
+</html>
