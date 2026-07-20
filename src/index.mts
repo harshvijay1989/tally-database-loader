@@ -1,6 +1,6 @@
 import process from 'node:process';
 import { tally } from './tally.mjs';
-import { database } from './database.mjs';
+import { loadDatabaseConfig, applyCommandlineConfig, initSink } from './sink/sink.mjs';
 import { logger } from './logger.mjs'
 
 let isSyncRunning = false;
@@ -44,7 +44,9 @@ function invokeImport(): Promise<void> {
 
 //Update commandline overrides to configuration options
 let cmdConfig = parseCommandlineOptions();
-database.updateCommandlineConfig(cmdConfig);
+let dbConfig = loadDatabaseConfig();
+applyCommandlineConfig(dbConfig, cmdConfig);
+initSink(dbConfig);
 tally.updateCommandlineConfig(cmdConfig);
 
 

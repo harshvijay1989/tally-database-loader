@@ -1,6 +1,6 @@
 {
     "database": {
-        "technology": "mssql",
+        "technology": "csv",
         "server": "localhost",
         "port": 0,
         "ssl": false,
@@ -13,8 +13,8 @@
         "definition": "tally-export-config.yaml",
         "server": "localhost",
         "port": 9000,
-        "fromdate": "2025-04-01",
-        "todate": "2026-03-31",
+        "fromdate": "auto",
+        "todate": "auto",
         "sync": "full",
         "batchsize": 5000,
         "frequency": 0,

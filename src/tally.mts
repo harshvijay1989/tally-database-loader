@@ -7,7 +7,7 @@ import stream from 'node:stream';
 import yaml from 'js-yaml';
 import { utility } from './utility.mjs';
 import { logger } from './logger.mjs';
-import { database } from './database.mjs';
+import { getSink } from './sink/sink.mjs';
 import { tallyConfig, tableConfigYAML, companyInfo, collectionConfigJSON, tableConfigJSON, fieldConfigJSON } from './definition.mjs';
 
 class _tally {
@@ -79,6 +79,7 @@ class _tally {
 
     importData(): Promise<void> {
         return new Promise<void>(async (resolve, reject) => {
+            let sink = getSink();
             try {
 
                 logger.logMessage('Tally to Database | version: 1.0.43');
@@ -112,7 +113,7 @@ class _tally {
                     }
                 }
 
-                await database.openConnectionPool();
+                await sink.open();
 
                 if (this.config.sync == 'incremental') {
 
@@ -121,7 +122,7 @@ class _tally {
                         return reject();
                     }
 
-                    if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
+                    if (sink.capabilities.incrementalSync) {
 
                         //set mandatory config required for incremental sync
                         this.config.fromdate = 'auto';
@@ -133,15 +134,15 @@ class _tally {
                         fs.mkdirSync('./csv');
 
                         // check if all the tables required exists in database and create if not
-                        if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
+                        if (sink.capabilities.sql) {
                             logger.logMessage('Verifying required database tables [%s]', new Date().toLocaleDateString());
 
                             let lstTables: tableConfigYAML[] = [];
                             lstTables.push(...this.lstTableMasterYaml);
                             lstTables.push(...this.lstTableTransactionYaml);
 
-                            //fetch list of existing tables in database                        
-                            let lstDatabaseTables = await database.listDatabaseTables();
+                            //fetch list of existing tables in database
+                            let lstDatabaseTables = await sink.listTables();
 
                             //prepare list of required tables
                             let lstRequiredTables = lstTables.map(p => p.name);
@@ -161,15 +162,15 @@ class _tally {
                             //run create table script only if none of the required tables are found
                             if (countRequiredTablesFound == 0) {
                                 logger.logMessage('Creating database tables [%s]', new Date().toLocaleDateString());
-                                await database.createDatabaseTables(this.config.sync);
+                                await sink.ensureSchema(this.config.sync);
                             }
                         }
 
                         //acquire last AlterID of master & transaction from last sync version of Database
                         logger.logMessage('Acquiring last AlterID from database');
 
-                        let lastAlterIdMasterDatabase = await database.executeScalar<number>(`select coalesce(max(cast(value as ${database.config.technology == 'mysql' ? 'unsigned int' : 'int'})),0) x from config where name = 'Last AlterID Master'`);
-                        let lastAlterIdTransactionDatabase = await database.executeScalar<number>(`select coalesce(max(cast(value as ${database.config.technology == 'mysql' ? 'unsigned int' : 'int'})),0) x from config where name = 'Last AlterID Transaction'`);
+                        let lastAlterIdMasterDatabase = await sink.executeScalar<number>(`select coalesce(max(cast(value as ${sink.dialect == 'mysql' ? 'unsigned int' : 'int'})),0) x from config where name = 'Last AlterID Master'`);
+                        let lastAlterIdTransactionDatabase = await sink.executeScalar<number>(`select coalesce(max(cast(value as ${sink.dialect == 'mysql' ? 'unsigned int' : 'int'})),0) x from config where name = 'Last AlterID Transaction'`);
 
                         //update active company information before starting import
                         logger.logMessage('Updating company information configuration table [%s]', new Date().toLocaleDateString());
@@ -207,8 +208,8 @@ class _tally {
                         }
                         for (let i = 0; i < lstPrimaryTables.length; i++) {
                             let activeTable = lstPrimaryTables[i];
-                            await database.executeNonQuery('truncate table _diff;');
-                            await database.executeNonQuery('truncate table _delete;');
+                            await sink.executeNonQuery('truncate table _diff;');
+                            await sink.executeNonQuery('truncate table _delete;');
                             let tempTable: tableConfigYAML = {
                                 name: '',
                                 collection: activeTable.collection,
@@ -229,23 +230,23 @@ class _tally {
                                 filters: activeTable.filters
                             };
                             await this.processReport('_diff', tempTable, configTallyXML);
-                            await database.bulkLoad(path.join(process.cwd(), `./csv/_diff.data`), '_diff', tempTable.fields.map(p => p.type)); //upload to temporary table
+                            await sink.loadFromFile('_diff', path.join(process.cwd(), `./csv/_diff.data`), tempTable.fields.map(p => p.type)); //upload to temporary table
                             fs.unlinkSync(path.join(process.cwd(), `./csv/_diff.data`)); //delete temporary file
 
                             //insert into delete list rows there were deleted in current data compared to previous one
-                            await database.executeNonQuery(`insert into _delete select guid from ${activeTable.name} where guid not in (select guid from _diff);`);
+                            await sink.executeNonQuery(`insert into _delete select guid from ${activeTable.name} where guid not in (select guid from _diff);`);
                             //insert into delete list rows that were modified in current data (as they will be imported freshly)
-                            await database.executeNonQuery(`insert into _delete select t.guid from ${activeTable.name} as t join _diff as s on s.guid = t.guid where s.alterid <> t.alterid;`);
+                            await sink.executeNonQuery(`insert into _delete select t.guid from ${activeTable.name} as t join _diff as s on s.guid = t.guid where s.alterid <> t.alterid;`);
 
                             //remove delete list rows from the source table
-                            await database.executeNonQuery(`delete from ${activeTable.name} where guid in (select guid from _delete)`);
+                            await sink.executeNonQuery(`delete from ${activeTable.name} where guid in (select guid from _delete)`);
 
                             //iterate through each cascade delete table and delete modified rows for insertion of fresh copy
                             if (Array.isArray(activeTable.cascade_delete) && activeTable.cascade_delete.length) {
                                 for (let j = 0; j < activeTable.cascade_delete.length; j++) {
                                     let targetTable = activeTable.cascade_delete[j].table;
                                     let targetField = activeTable.cascade_delete[j].field;
-                                    await database.executeNonQuery(`delete from ${targetTable} where ${targetField} in (select guid from _delete);`);
+                                    await sink.executeNonQuery(`delete from ${targetTable} where ${targetField} in (select guid from _delete);`);
                                 }
                             }
                         }
@@ -262,7 +263,7 @@ class _tally {
 
                                 let targetTable = activeTable.name;
                                 await this.processReport(targetTable, activeTable, configTallyXML);
-                                await database.bulkLoad(path.join(process.cwd(), `./csv/${targetTable}.data`), targetTable, activeTable.fields.map(p => p.type));
+                                await sink.loadFromFile(targetTable, path.join(process.cwd(), `./csv/${targetTable}.data`), activeTable.fields.map(p => p.type));
                                 fs.unlinkSync(path.join(process.cwd(), `./csv/${targetTable}.data`)); //delete raw file
                                 logger.logMessage('  syncing table %s', targetTable);
                             }
@@ -280,7 +281,7 @@ class _tally {
 
                                 let targetTable = activeTable.name;
                                 await this.processReport(targetTable, activeTable, configTallyXML);
-                                await database.bulkLoad(path.join(process.cwd(), `./csv/${targetTable}.data`), targetTable, activeTable.fields.map(p => p.type));
+                                await sink.loadFromFile(targetTable, path.join(process.cwd(), `./csv/${targetTable}.data`), activeTable.fields.map(p => p.type));
                                 fs.unlinkSync(path.join(process.cwd(), `./csv/${targetTable}.data`)); //delete raw file
                                 logger.logMessage('  syncing table %s', targetTable);
                             }
@@ -295,14 +296,14 @@ class _tally {
                                     for (let j = 0; j < activeTable.cascade_update.length; j++) {
                                         let targetTable = activeTable.cascade_update[j].table;
                                         let targetField = activeTable.cascade_update[j].field;
-                                        if (database.config.technology == 'mssql') {
-                                            await database.executeNonQuery(`update t set t.${targetField} = s.name from ${targetTable} as t join ${activeTable.name} as s on s.guid = t._${targetField} ;`);
+                                        if (sink.dialect == 'mssql') {
+                                            await sink.executeNonQuery(`update t set t.${targetField} = s.name from ${targetTable} as t join ${activeTable.name} as s on s.guid = t._${targetField} ;`);
                                         }
-                                        else if (database.config.technology == 'mysql') {
-                                            await database.executeNonQuery(`update ${targetTable} as t join ${activeTable.name} as s on s.guid = t._${targetField} set t.${targetField} = s.name ;`);
+                                        else if (sink.dialect == 'mysql') {
+                                            await sink.executeNonQuery(`update ${targetTable} as t join ${activeTable.name} as s on s.guid = t._${targetField} set t.${targetField} = s.name ;`);
                                         }
-                                        else if (database.config.technology == 'postgres') {
-                                            await database.executeNonQuery(`update ${targetTable} as t set ${targetField} = s.name from ${activeTable.name} as s where s.guid = t._${targetField} ;`);
+                                        else if (sink.dialect == 'postgres') {
+                                            await sink.executeNonQuery(`update ${targetTable} as t set ${targetField} = s.name from ${activeTable.name} as s where s.guid = t._${targetField} ;`);
                                         }
                                         else;
                                     }
@@ -312,11 +313,11 @@ class _tally {
                         if (flgIsTransactionChanged) {
                             //check if any Voucher Type is set to auto numbering
                             //automatic voucher number shifts voucher numbers of all subsequent date vouchers on insertion of in-between vouchers which requires updation
-                            let countAutoNumberVouchers = await database.executeNonQuery(`select count(*) as c from mst_vouchertype where numbering_method like '%Auto%' ;`);
+                            let countAutoNumberVouchers = await sink.executeNonQuery(`select count(*) as c from mst_vouchertype where numbering_method like '%Auto%' ;`);
                             if (countAutoNumberVouchers) {
 
                                 logger.logMessage('  processing voucher number updates');
-                                await database.executeNonQuery('truncate table _vchnumber;');
+                                await sink.executeNonQuery('truncate table _vchnumber;');
 
                                 //pull list of voucher numbers for all the vouchers
                                 let activeTable = this.lstTableTransactionYaml.filter(p => p.name = 'trn_voucher')[0];
@@ -344,27 +345,27 @@ class _tally {
                                 };
 
                                 await this.processReport('_vchnumber', tempTable, configTallyXML);
-                                await database.bulkLoad(path.join(process.cwd(), `./csv/_vchnumber.data`), '_vchnumber', tempTable.fields.map(p => p.type)); //upload to temporary table
+                                await sink.loadFromFile('_vchnumber', path.join(process.cwd(), `./csv/_vchnumber.data`), tempTable.fields.map(p => p.type)); //upload to temporary table
                                 fs.unlinkSync(path.join(process.cwd(), `./csv/_vchnumber.data`)); //delete temporary file
 
                                 //update voucher number with fresh copy
-                                if (database.config.technology == 'mssql') {
-                                    await database.executeNonQuery('update t set t.voucher_number = s.voucher_number from trn_voucher as t join _vchnumber as s on s.guid = t.guid;');
+                                if (sink.dialect == 'mssql') {
+                                    await sink.executeNonQuery('update t set t.voucher_number = s.voucher_number from trn_voucher as t join _vchnumber as s on s.guid = t.guid;');
                                 }
-                                else if (database.config.technology == 'mysql') {
-                                    await database.executeNonQuery('update trn_voucher as t join _vchnumber as s on s.guid = t.guid set t.voucher_number = s.voucher_number;');
+                                else if (sink.dialect == 'mysql') {
+                                    await sink.executeNonQuery('update trn_voucher as t join _vchnumber as s on s.guid = t.guid set t.voucher_number = s.voucher_number;');
                                 }
-                                else if (database.config.technology == 'postgres') {
-                                    await database.executeNonQuery('update trn_voucher as t set voucher_number = s.voucher_number from _vchnumber as s where s.guid = t.guid;');
+                                else if (sink.dialect == 'postgres') {
+                                    await sink.executeNonQuery('update trn_voucher as t set voucher_number = s.voucher_number from _vchnumber as s where s.guid = t.guid;');
                                 }
                                 else;
                             }
                         }
 
                         //erase rows for all the temporary calculation tables
-                        await database.executeNonQuery('truncate table _diff ;');
-                        await database.executeNonQuery('truncate table _delete ;');
-                        await database.executeNonQuery('truncate table _vchnumber ;');
+                        await sink.executeNonQuery('truncate table _diff ;');
+                        await sink.executeNonQuery('truncate table _delete ;');
+                        await sink.executeNonQuery('truncate table _vchnumber ;');
                     }
                     else
                         logger.logMessage('Incremental Sync is supported only for SQL Server / MySQL / PostgreSQL');
@@ -428,11 +429,11 @@ class _tally {
                     fs.mkdirSync('./csv');
 
                     // check if all the tables required exists in database and create if not
-                    if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
+                    if (sink.capabilities.sql) {
                         logger.logMessage('Verifying required database tables [%s]', new Date().toLocaleDateString());
 
                         //fetch list of existing tables in database
-                        let lstDatabaseTables = await database.listDatabaseTables();
+                        let lstDatabaseTables = await sink.listTables();
 
                         //prepare list of required tables
                         let lstRequiredTables: string[] = [];
@@ -450,11 +451,11 @@ class _tally {
                         //run create table script only if none of the required tables are found
                         if (countRequiredTablesFound == 0) {
                             logger.logMessage('Creating database tables [%s]', new Date().toLocaleDateString());
-                            await database.createDatabaseTables(this.config.sync);
+                            await sink.ensureSchema(this.config.sync);
                         }
                     }
 
-                    if (/^(mssql|mysql|postgres|bigquery|csv)$/g.test(database.config.technology)) {
+                    if (sink.capabilities.persistsCompanyInfo) {
                         //update active company information before starting import
                         logger.logMessage('Updating company information configuration table [%s]', new Date().toLocaleDateString());
                         await this.saveCompanyInfo();
@@ -551,19 +552,19 @@ class _tally {
                     }
 
                     if (this.truncateTable) {
-                        if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
-                            await database.truncateTables(lstTables); //truncate tables
+                        if (sink.capabilities.sql) {
+                            await sink.truncateTables(lstTables); //truncate tables
                         }
                     }
 
-                    if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
+                    if (sink.capabilities.sql) {
                         if (this.isDefinitionYAML) {
                             //perform CSV file based bulk import into database
                             logger.logMessage('Loading CSV files to database tables [%s]', new Date().toLocaleString());
                             for (let i = 0; i < lstTables.length; i++) {
                                 let targetTable = lstTables[i];
                                 let targetTableConfig = this.lstTableYaml.filter(p => p.name == targetTable)[0];
-                                let rowCount = await database.bulkLoad(path.join(process.cwd(), `./csv/${targetTable}.data`), targetTable, targetTableConfig.fields.map(p => p.type));
+                                let rowCount = await sink.loadFromFile(targetTable, path.join(process.cwd(), `./csv/${targetTable}.data`), targetTableConfig.fields.map(p => p.type));
                                 fs.unlinkSync(path.join(process.cwd(), `./csv/${targetTable}.data`)); //delete raw file
                                 logger.logMessage('  %s: imported %d rows', targetTable, rowCount);
                             }
@@ -572,14 +573,14 @@ class _tally {
                             logger.logMessage('Loading collections to database tables [%s]', new Date().toLocaleString());
                             for (const targetTable of this.lstDatabaseTableDefinitionJson) {
                                 let lstDataRows = this.populateTableFromCollectionData(targetTable);
-                                let rowCount = await database.bulkLoadTableJson(targetTable, lstDataRows);
+                                let rowCount = await sink.loadFromRows(targetTable, lstDataRows);
                                 logger.logMessage('  %s: imported %d rows', targetTable.name, rowCount);
                             }
                         }
                         fs.rmdirSync('./csv'); //remove directory
-                    } else if (database.config.technology == 'csv' || database.config.technology == 'json' || database.config.technology == 'bigquery') {
+                    } else if (sink.capabilities.fileOutput) {
 
-                        if (database.config.technology == 'bigquery') {
+                        if (sink.capabilities.upload) {
                             logger.logMessage('Loading data into BigQuery tables [%s]', new Date().toLocaleString());
                         }
 
@@ -589,17 +590,8 @@ class _tally {
                                 let targetTable = lstTables[i];
                                 let targetTableConfig = this.lstTableYaml.filter(p => p.name == targetTable)[0];
                                 let lstFieldTypes = targetTableConfig.fields.map(p => p.type);
-                                let content = fs.readFileSync(`./csv/${targetTable}.data`, 'utf-8');
-                                if (database.config.technology == 'json') {
-                                    content = JSON.stringify(database.csvToJsonArray(content, targetTable, lstFieldTypes));
-                                }
-                                else {
-                                    content = database.convertCSV(content, lstFieldTypes);
-                                }
-                                fs.writeFileSync(`./csv/${targetTable}.${database.config.technology == 'json' ? 'json' : 'csv'}`, '\ufeff' + content);
-                                fs.unlinkSync(`./csv/${targetTable}.data`); //delete raw file
-                                if (database.config.technology == 'bigquery') {
-                                    let rowCount = await database.uploadGoogleBigQuery(targetTable);
+                                let rowCount = await sink.loadFromFile(targetTable, `./csv/${targetTable}.data`, lstFieldTypes);
+                                if (sink.capabilities.upload) {
                                     logger.logMessage('  %s: imported %d rows', targetTable, rowCount);
                                 }
                             }
@@ -608,9 +600,8 @@ class _tally {
                             for (const targetTable of lstTables) {
                                 let tableDef = this.lstDatabaseTableDefinitionJson.filter(p => p.name == targetTable)[0];
                                 let lstDataRows = this.populateTableFromCollectionData(tableDef);
-                                await database.jsonToCsv(`./csv/${targetTable}.csv`, tableDef, lstDataRows, true); //save CSV file
-                                if (database.config.technology == 'bigquery') {
-                                    let rowCount = await database.uploadGoogleBigQuery(targetTable);
+                                let rowCount = await sink.loadFromRows(tableDef, lstDataRows);
+                                if (sink.capabilities.upload) {
                                     logger.logMessage('  %s: imported %d rows', targetTable, rowCount);
                                 }
                             }
@@ -623,7 +614,7 @@ class _tally {
                 logger.logError('tally.importData()', err);
                 reject(err);
             } finally {
-                await database.closeConnectionPool();
+                await sink.close();
             }
         });
     }
@@ -835,6 +826,7 @@ class _tally {
     private saveCompanyInfo(): Promise<void> {
         return new Promise<void>(async (resolve, reject) => {
             try {
+                let sink = getSink();
                 const convertDateYYYYMMDD = (dateStr: string): string => {
                     let partYear = dateStr.substring(0, 4);
                     let partMonth = dateStr.substring(4, 6);
@@ -860,15 +852,15 @@ class _tally {
                     let altIdTransaction = parseInt(lstCompanyInfoParts[5]);
 
                     //clear config table of database and insert active company info to config table
-                    if (/^(mssql|mysql|postgres)$/g.test(database.config.technology)) {
-                        await database.executeNonQuery('truncate table config;');
-                        await database.executeNonQuery(`insert into config(name,value) values('Update Timestamp','${new Date().toLocaleString()}'),('Company Name','${companyName}'),('Period From','${this.config.fromdate}'),('Period To','${this.config.todate}'),('Last AlterID Master','${altIdMaster}'),('Last AlterID Transaction','${altIdTransaction}');`);
+                    if (sink.capabilities.sql) {
+                        await sink.executeNonQuery('truncate table config;');
+                        await sink.executeNonQuery(`insert into config(name,value) values('Update Timestamp','${new Date().toLocaleString()}'),('Company Name','${companyName}'),('Period From','${this.config.fromdate}'),('Period To','${this.config.todate}'),('Last AlterID Master','${altIdMaster}'),('Last AlterID Transaction','${altIdTransaction}');`);
                     }
-                    else if (/^(csv|bigquery)$/g.test(database.config.technology)) {
+                    else if (sink.capabilities.fileOutput) {
                         let csvContent = `name,value\r\nUpdate Timestamp,${new Date().toLocaleString().replace(',', '')}\r\nCompany Name,${companyName}\r\nPeriod From,${this.config.fromdate}\r\nPeriod To,${this.config.todate}\r\Last AlterID nMaster,${altIdMaster}\r\Last AlterID nTransaction,${altIdTransaction}`;
                         fs.writeFileSync('./csv/config.csv', csvContent, { encoding: 'utf-8' });
-                        if (database.config.technology == 'bigquery') {
-                            await database.uploadGoogleBigQuery('config');
+                        if (sink.capabilities.upload) {
+                            await sink.uploadTable('config');
                         }
                     }
                     else {

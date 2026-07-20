@@ -17,7 +17,8 @@
     "@types/node": "^24.1.0",
     "@types/pg": "^8.15.4",
     "@types/pg-copy-streams": "^1.2.5",
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.0",

@@ -145,3 +145,65 @@ export interface companyInfo {
     altmstid: number;
     altvchid?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Sink adapter layer (pillar 1 of the platform architecture)
+// See docs/architecture-sink.md and docs/platform-architecture.md
+// ---------------------------------------------------------------------------
+
+/** SQL dialects that share the SqlSink implementation. */
+export type sqlDialect = 'mssql' | 'mysql' | 'postgres';
+
+/**
+ * What a sink can do. Replaces the technology-string tests that used to be
+ * scattered through tally.mts. Callers guard on a capability, never on a
+ * technology name.
+ */
+export interface sinkCapabilities {
+    /** executeNonQuery / executeScalar against the target (mssql,mysql,postgres). */
+    sql: boolean;
+    /** the incremental diff/delete/cascade orchestration is supported (mssql,mysql,postgres). */
+    incrementalSync: boolean;
+    /** terminal output is files on disk the caller/sink post-processes (csv,json,bigquery). */
+    fileOutput: boolean;
+    /** has a post-write upload step (bigquery). */
+    upload: boolean;
+    /** persists the company-info metadata (everything except json). */
+    persistsCompanyInfo: boolean;
+}
+
+/**
+ * The pluggable target. Every existing technology implements this; a future
+ * Salesforce sink implements the same contract.
+ *
+ * Optional members are present iff the matching capability is true, so callers
+ * are forced by the type system to guard before calling.
+ */
+export interface sinkAdapter {
+    readonly config: connectionConfig;
+    readonly capabilities: sinkCapabilities;
+    /** present for SQL sinks; lets callers build dialect-correct SQL (Option B). */
+    readonly dialect?: sqlDialect;
+
+    // lifecycle
+    open(): Promise<void>;
+    close(): Promise<void>;
+
+    // schema management (capability: sql)
+    listTables(): Promise<string[]>;
+    ensureSchema(syncMode: string): Promise<void>;
+
+    // arbitrary SQL (capability: sql)
+    executeNonQuery(sqlQuery: string | string[], values?: Map<string, any>): Promise<number>;
+    executeScalar<T>(sqlQuery: string): Promise<T>;
+    truncateTables(lstTables: string[]): Promise<void>;
+
+    // bulk load
+    /** consume a tab-delimited .data file produced by the YAML/report path. */
+    loadFromFile(targetTable: string, filePath: string, lstFieldType: string[]): Promise<number>;
+    /** consume typed rows produced by the JSON/collection path. */
+    loadFromRows(targetTable: tableConfigJSON, lstTableData: any[]): Promise<number>;
+
+    // post-write upload (capability: upload)
+    uploadTable(targetTable: string): Promise<number>;
+}

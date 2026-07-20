@@ -3,72 +3,42 @@ import { pipeline } from 'node:stream/promises';
 import mysql from 'mysql2/promise';
 import mssql from 'tedious';
 import postgres from 'pg';
-import { BigQuery } from '@google-cloud/bigquery';
 import { from as pgLoadInto } from 'pg-copy-streams';
-import { logger } from './logger.mjs';
+import { logger } from '../logger.mjs';
+import { csvToJsonArray, convertCSV, jsonToCsv } from './rowCodec.mjs';
 let connectionPoolMysql;
-class _database {
+// Abstract base for the SQL database sinks (mssql / mysql / postgres). This is a
+// verbatim relocation of the SQL-specific parts of the former database.mts. The
+// per-dialect branches remain keyed on this.config.technology (sink-doc Option B) so
+// behaviour is byte-identical; the three concrete subclasses exist for identity and
+// future divergence. See docs/architecture-sink.md.
+export class SqlSink {
     config;
     maxQuerySize = 65535; //maximum size of SQL query to be executed
-    bigquery = new BigQuery();
     connectionPoolPostgres = new postgres.Pool({});
-    constructor() {
-        try {
-            this.config = JSON.parse(fs.readFileSync('./config.json', 'utf8'))['database'];
+    get capabilities() {
+        return {
+            sql: true,
+            incrementalSync: true,
+            fileOutput: false,
+            upload: false,
+            persistsCompanyInfo: true
+        };
+    }
+    get dialect() {
+        return this.config.technology;
+    }
+    constructor(config) {
+        this.config = config;
+        // modify max query size for different database technology
+        if (this.config.technology == 'mysql') {
+            this.maxQuerySize = 4194303; //4 MB for MySQL
         }
-        catch (err) {
-            logger.logError('database()', err);
-            throw err;
+        else if (this.config.technology == 'postgres') {
+            this.maxQuerySize = 16777215; //16 MB for PostgreSQL
         }
     }
-    updateCommandlineConfig(lstConfigs) {
-        try {
-            if (lstConfigs.has('database-technology'))
-                this.config.technology = lstConfigs.get('database-technology') || '';
-            if (lstConfigs.has('database-server'))
-                this.config.server = lstConfigs.get('database-server') || '';
-            if (lstConfigs.has('database-port'))
-                this.config.port = parseInt(lstConfigs.get('database-port') || '0');
-            if (lstConfigs.has('database-schema'))
-                this.config.schema = lstConfigs.get('database-schema') || '';
-            if (lstConfigs.has('database-username'))
-                this.config.username = lstConfigs.get('database-username') || '';
-            if (lstConfigs.has('database-password'))
-                this.config.password = lstConfigs.get('database-password') || '';
-            if (lstConfigs.has('database-loadmethod'))
-                this.config.loadmethod = lstConfigs.get('database-loadmethod') || 'insert';
-            if (lstConfigs.has('database-ssl'))
-                this.config.ssl = lstConfigs.get('database-ssl') == 'true';
-            this.config.technology = this.config.technology.toLowerCase(); //convert technology to lowercase
-            //port = 0 [load default port for]
-            if (this.config.port == 0) {
-                if (this.config.technology == 'mssql')
-                    this.config.port = 1433;
-                else if (this.config.technology == 'mysql')
-                    this.config.port = 3306;
-                else if (this.config.technology == 'postgres')
-                    this.config.port = 5432;
-                else
-                    ;
-            }
-            // initialize Google BigQuery connection
-            if (this.config.technology.toLowerCase() == 'bigquery') {
-                this.bigquery = new BigQuery({ keyFilename: './bigquery-credentials.json' });
-            }
-            // modify max query size for different database technology
-            if (this.config.technology == 'mysql') {
-                this.maxQuerySize = 4194303; //4 MB for MySQL
-            }
-            else if (this.config.technology == 'postgres') {
-                this.maxQuerySize = 16777215; //16 MB for PostgreSQL
-            }
-        }
-        catch (err) {
-            logger.logError('database.updateCommandlineConfig()', err);
-            throw err;
-        }
-    }
-    async openConnectionPool() {
+    async open() {
         return new Promise(async (resolve, reject) => {
             try {
                 if (this.config.technology == 'postgres') {
@@ -145,12 +115,12 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.openConnectionPool()', err);
+                logger.logError('SqlSink.open()', err);
             }
         });
     }
     ;
-    async closeConnectionPool() {
+    async close() {
         return new Promise(async (resolve, reject) => {
             try {
                 if (this.config.technology == 'postgres') {
@@ -165,127 +135,14 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.closeConnectionPool()', err);
+                logger.logError('SqlSink.close()', err);
             }
         });
     }
-    convertCSV(content, lstFieldType, doubleQuote = false) {
-        let lstLines = content.split(/\r\n/g);
-        for (let r = 0; r < lstLines.length; r++) {
-            let line = lstLines[r];
-            line = line.replace(/ñ/g, ''); //replace blank date with empty text
-            line = line.replace(/\"/g, '""'); //escape double quotes with 2 instance of double quotes (as per ISO)
-            let lstValues = line.split('\t');
-            for (let c = 0; c < lstValues.length; c++) {
-                let targetFieldType = lstFieldType[c];
-                let targetFieldValue = lstValues[c];
-                if (doubleQuote)
-                    lstValues[c] = `"${targetFieldValue}"`;
-                else if (targetFieldType == 'text' || targetFieldType == 'date')
-                    lstValues[c] = `"${targetFieldValue}"`;
-            }
-            lstLines[r] = lstValues.join(',');
-        }
-        return lstLines.join('\r\n');
+    async uploadTable(targetTable) {
+        throw new Error('uploadTable is not supported by SQL sinks');
     }
-    csvToJsonArray(content, targetTable, lstFieldType) {
-        let retval = [];
-        try {
-            let lstLines = content.split(/\r\n/g);
-            let fieldList = lstLines.shift() || ''; //extract header
-            let lstFields = fieldList.split(/\t/g);
-            for (const line of lstLines) {
-                if (line == '')
-                    continue;
-                let objRow = {};
-                let lstValues = line.split(/\t/g);
-                for (let f = 0; f < lstFields.length; f++) {
-                    const fieldName = lstFields[f];
-                    const fieldType = lstFieldType[f];
-                    let fieldRawValue = lstValues[f];
-                    let fieldValue = undefined;
-                    if (fieldRawValue == 'ñ') { //NULL
-                        fieldValue = null;
-                    }
-                    else if (fieldType == 'text') { //Text
-                        fieldValue = fieldRawValue;
-                    }
-                    else if (fieldType == 'number' || fieldType == 'logical' || fieldType == 'amount' || fieldType == 'quantity' || fieldType == 'rate') { //Numeric
-                        fieldValue = parseFloat(fieldRawValue);
-                        if (isNaN(fieldValue)) {
-                            fieldValue = null;
-                        }
-                    }
-                    else if (fieldType == 'date') {
-                        fieldValue = fieldRawValue == '' ? null : new Date(fieldRawValue);
-                    }
-                    Object.defineProperty(objRow, fieldName.trim(), { enumerable: true, value: fieldValue });
-                }
-                retval.push(objRow);
-            }
-        }
-        catch (err) {
-            logger.logError('database.csvToJsonArray()', err);
-        }
-        return retval;
-    }
-    jsonToCsv(filePath, tableConfig, lstTableData, emitBOM = false) {
-        return new Promise((resolve, reject) => {
-            try {
-                let writeStream = fs.createWriteStream(filePath, { encoding: 'utf-8' });
-                writeStream.on('error', (err) => {
-                    reject(err);
-                });
-                writeStream.on('finish', () => {
-                    resolve();
-                });
-                if (emitBOM) {
-                    writeStream.write('\ufeff'); //write BOM for UTF-8
-                }
-                //write header
-                let headerLine = tableConfig.fields.map(p => p.name).join(',');
-                writeStream.write(headerLine);
-                //write data rows
-                for (const row of lstTableData) {
-                    let rowLine = '\n';
-                    let lstRowValues = [];
-                    for (const targetField of tableConfig.fields) {
-                        let fieldValue = row[targetField.name];
-                        if (fieldValue === null || fieldValue === undefined) {
-                            lstRowValues.push('');
-                        }
-                        else if (typeof fieldValue === 'string') {
-                            if (fieldValue.includes('\n') || fieldValue.includes('\r') || fieldValue.includes('\t')) { //strip off new line, carriage return, tab characters
-                                fieldValue = fieldValue.replace(/\r/g, '').replace(/\n/g, ' ').replace(/\t/g, ' ');
-                            }
-                            if (fieldValue.includes('"')) {
-                                fieldValue = fieldValue.replace(/"/g, '""'); //escape double quotes with 2 instance of double quotes (as per ISO)
-                            }
-                            lstRowValues.push(`"${fieldValue}"`);
-                        }
-                        else if (typeof fieldValue === 'number') {
-                            lstRowValues.push(fieldValue.toString());
-                        }
-                        else if (typeof fieldValue === 'boolean') {
-                            lstRowValues.push(fieldValue ? '1' : '0');
-                        }
-                        else if (fieldValue instanceof Date) {
-                            let v = fieldValue.toISOString().split('T')[0];
-                            lstRowValues.push(`"${v}"`);
-                        }
-                    }
-                    rowLine += lstRowValues.join(',');
-                    writeStream.write(rowLine);
-                }
-                writeStream.end();
-            }
-            catch (err) {
-                logger.logError(`database.jsonToCsvTsv(${tableConfig.name})`, err);
-                reject(err);
-            }
-        });
-    }
-    bulkLoad(csvFile, targetTable, lstFieldType) {
+    loadFromFile(targetTable, csvFile, lstFieldType) {
         return new Promise(async (resolve, reject) => {
             let sqlQuery = '';
             try {
@@ -334,22 +191,22 @@ class _database {
                     if (this.config.technology == 'postgres') {
                         let fileContent = fs.readFileSync(csvFile, 'utf-8');
                         fileContent = fileContent.replace(/ñ/g, 'ø'); //substitute NULL with placeholder
-                        fileContent = this.convertCSV(fileContent, lstFieldType);
+                        fileContent = convertCSV(fileContent, lstFieldType);
                         fileContent = fileContent.replace(/\"ø\"/g, ''); //replace placeholder with nothing along with enclosing double quotes
-                        fs.writeFileSync(csvFile, '\ufeff' + fileContent);
+                        fs.writeFileSync(csvFile, '﻿' + fileContent);
                     }
                     else if (this.config.technology == 'mysql') {
                         let fileContent = fs.readFileSync(csvFile, 'utf-8');
                         fileContent = fileContent.replace(/ñ/g, 'ø'); //substitute NULL with placeholder
-                        fileContent = this.convertCSV(fileContent, lstFieldType, true);
+                        fileContent = convertCSV(fileContent, lstFieldType, true);
                         fileContent = fileContent.replace(/\"ø\"/g, 'NULL'); //replace placeholder with nothing along with enclosing double quotes
-                        fs.writeFileSync(csvFile, '\ufeff' + fileContent); //write desired changes to file
+                        fs.writeFileSync(csvFile, '﻿' + fileContent); //write desired changes to file
                     }
                     else if (this.config.technology == 'mssql') { //SQL Server
                         let fileContent = fs.readFileSync(csvFile, 'utf-8');
                         fileContent = fileContent.replace(/ñ/g, ''); //substitute NULL with placeholder
                         //fileContent = fileContent.replace(/\"/g, '""'); //escape double quotes
-                        fs.writeFileSync(csvFile, '\ufeff' + fileContent + '\r\n'); //write desired changes to file
+                        fs.writeFileSync(csvFile, '﻿' + fileContent + '\r\n'); //write desired changes to file
                     }
                     else
                         ;
@@ -370,12 +227,12 @@ class _database {
             catch (err) {
                 // if (typeof err == 'object')
                 //     err['targetQuery'] = sqlQuery;
-                logger.logError(`database.bulkLoad(${targetTable})`, err);
+                logger.logError(`SqlSink.loadFromFile(${targetTable})`, err);
                 reject(err);
             }
         });
     }
-    bulkLoadTableJson(targetTable, lstTableData) {
+    loadFromRows(targetTable, lstTableData) {
         return new Promise(async (resolve, reject) => {
             let retval = 0;
             try {
@@ -389,7 +246,7 @@ class _database {
                     retval = await this.dumpDataMssqlJson(targetTable, lstTableData);
                 }
                 else if (this.config.technology == 'postgres') {
-                    await this.jsonToCsv(`./csv/${targetTable.name}.data`, targetTable, lstTableData);
+                    await jsonToCsv(`./csv/${targetTable.name}.data`, targetTable, lstTableData);
                     retval = await this.dumpDataPostges(targetTable.name);
                     fs.unlinkSync(`./csv/${targetTable.name}.data`);
                 }
@@ -400,7 +257,7 @@ class _database {
                 resolve(retval);
             }
             catch (err) {
-                logger.logError(`database.bulkLoadTableJson(${targetTable.name})`, err);
+                logger.logError(`SqlSink.loadFromRows(${targetTable.name})`, err);
                 if (this.config.technology == 'postgres') {
                     fs.renameSync(`./csv/${targetTable.name}.data`, `./csv/${targetTable.name}.csv`); //keep the CSV file for debugging
                 }
@@ -474,28 +331,11 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.truncateTables()', err);
+                logger.logError('SqlSink.truncateTables()', err);
             }
         });
     }
-    uploadGoogleBigQuery(targetTable) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                const [job] = await this.bigquery.dataset(this.config.schema).table(targetTable).load(`./csv/${targetTable}.csv`, {
-                    sourceFormat: 'CSV',
-                    skipLeadingRows: 1,
-                    writeDisposition: 'WRITE_TRUNCATE'
-                });
-                let retval = parseInt(job.statistics?.load?.outputRows || '0');
-                resolve(retval);
-            }
-            catch (err) {
-                reject(err);
-                logger.logError('database.dumpDataBigQuery()', err);
-            }
-        });
-    }
-    listDatabaseTables() {
+    listTables() {
         let retval = [];
         return new Promise(async (resolve, reject) => {
             try {
@@ -526,11 +366,11 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.listDatabaseTables()', err);
+                logger.logError('SqlSink.listTables()', err);
             }
         });
     }
-    createDatabaseTables(syncMode) {
+    ensureSchema(syncMode) {
         return new Promise(async (resolve, reject) => {
             let scriptFileName = './database-structure.sql';
             if (syncMode == 'incremental')
@@ -556,7 +396,7 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.createDatabaseTables()', err);
+                logger.logError('SqlSink.ensureSchema()', err);
             }
         });
     }
@@ -581,7 +421,7 @@ class _database {
                 resolve({ rowCount, data });
             }
             catch (err) {
-                logger.logError('database.executeMysql()', err);
+                logger.logError('SqlSink.executeMysql()', err);
                 reject(err);
             }
             finally {
@@ -620,7 +460,7 @@ class _database {
                             errorMessage = 'Invalid Database / Username / Password';
                         else
                             ;
-                        logger.logError('database.executeMssql()', errorMessage || connErr);
+                        logger.logError('SqlSink.executeMssql()', errorMessage || connErr);
                         reject(connErr);
                     }
                     else {
@@ -654,7 +494,7 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.executeMssql()', err);
+                logger.logError('SqlSink.executeMssql()', err);
             }
         });
     }
@@ -682,7 +522,7 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.executePostgres()', err);
+                logger.logError('SqlSink.executePostgres()', err);
             }
             finally {
                 connection.release();
@@ -720,7 +560,7 @@ class _database {
                             errorMessage = 'Invalid Database / Username / Password';
                         else
                             ;
-                        logger.logError('database.readMssql()', errorMessage || connErr);
+                        logger.logError('SqlSink.readMssql()', errorMessage || connErr);
                         reject(connErr);
                     }
                     else {
@@ -741,7 +581,7 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.readMssql()', err);
+                logger.logError('SqlSink.readMssql()', err);
             }
         });
     }
@@ -757,7 +597,7 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError(`database.dumpDataPostges(${targetTable})`, err);
+                logger.logError(`SqlSink.dumpDataPostges(${targetTable})`, err);
             }
             finally {
                 connection.release();
@@ -800,7 +640,7 @@ class _database {
                         ;
                 }
                 reject(err);
-                logger.logError(`database.dumpDataMysql(${targetTable})`, errorMessage || err);
+                logger.logError(`SqlSink.dumpDataMysql(${targetTable})`, errorMessage || err);
             }
             finally {
                 await connection.end();
@@ -821,8 +661,8 @@ class _database {
                 resolve(result.affectedRows || 0);
             }
             catch (err) {
-                logger.logError(`database.dumpDataMysqlJson(${targetTable.name})`, err);
-                this.jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
+                logger.logError(`SqlSink.dumpDataMysqlJson(${targetTable.name})`, err);
+                jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
                 reject(err);
             }
             finally {
@@ -835,7 +675,7 @@ class _database {
             let lstColumnInfo = [];
             try {
                 let content = fs.readFileSync(`./csv/${targetTable}.data`, 'utf-8');
-                let lstData = this.csvToJsonArray(content, targetTable, lstFieldType);
+                let lstData = csvToJsonArray(content, targetTable, lstFieldType);
                 if (!lstData.length) { //skip bulk insert if no rows are found
                     return resolve(0);
                 }
@@ -867,7 +707,7 @@ class _database {
                             let fieldName = lstColumnInfo[fieldIndex].fieldName;
                             errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                         }
-                        logger.logError(`database.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
+                        logger.logError(`SqlSink.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
                         reject(msg);
                     });
                     if (connErr) {
@@ -880,7 +720,7 @@ class _database {
                             errorMessage = 'Invalid Database / Username / Password';
                         else
                             ;
-                        logger.logError('database.dumpDataMssql()', errorMessage || connErr);
+                        logger.logError('SqlSink.dumpDataMssql()', errorMessage || connErr);
                         reject(connErr);
                     }
                     else {
@@ -936,14 +776,14 @@ class _database {
                         let fieldName = lstColumnInfo[fieldIndex - 1].fieldName; //-1 as column index in error message is 1-based
                         errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                     }
-                    logger.logError(`database.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
+                    logger.logError(`SqlSink.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
                     reject(msg);
                 });
                 connection.connect();
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.dumpDataMssql()', err);
+                logger.logError('SqlSink.dumpDataMssql()', err);
             }
         });
     }
@@ -981,7 +821,7 @@ class _database {
                             let fieldName = targetTable.fields[fieldIndex - 1].name; //-1 as column index in error message is 1-based
                             errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                         }
-                        logger.logError(`database.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
+                        logger.logError(`SqlSink.dumpDataMssql(${targetTable})`, msg.message + errorDescription);
                         reject(msg);
                     });
                     if (connErr) {
@@ -994,7 +834,7 @@ class _database {
                             errorMessage = 'Invalid Database / Username / Password';
                         else
                             ;
-                        logger.logError('database.dumpDataMssql()', errorMessage || connErr);
+                        logger.logError('SqlSink.dumpDataMssql()', errorMessage || connErr);
                         reject(connErr);
                     }
                     else {
@@ -1056,15 +896,15 @@ class _database {
                         let fieldName = targetTable.fields[fieldIndex - 1].name; //-1 as column index in error message is 1-based
                         errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                     }
-                    logger.logError(`database.dumpDataMssqlJson(${targetTable.name})`, msg.message + errorDescription);
-                    this.jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
+                    logger.logError(`SqlSink.dumpDataMssqlJson(${targetTable.name})`, msg.message + errorDescription);
+                    jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
                     reject(msg);
                 });
                 connection.connect();
             }
             catch (err) {
-                logger.logError(`database.dumpDataMssqlJson(${targetTable.name})`, err);
-                this.jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
+                logger.logError(`SqlSink.dumpDataMssqlJson(${targetTable.name})`, err);
+                jsonToCsv(`./csv/${targetTable.name}.csv`, targetTable, lstTableData); //keep the CSV file for debugging
                 reject(err);
             }
         });
@@ -1100,11 +940,9 @@ class _database {
             }
             catch (err) {
                 reject(err);
-                logger.logError('database.populateDatabaseTableInfo()', err);
+                logger.logError('SqlSink.populateDatabaseTableInfo()', err);
             }
         });
     }
 }
-let database = new _database();
-export { database };
-//# sourceMappingURL=database.mjs.map
+//# sourceMappingURL=sqlSink.mjs.map
