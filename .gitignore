@@ -13,3 +13,4 @@ bigquery-credentials.json
 salesforce-credentials.json
 adls-config.json
 mapping.json
+mappings/

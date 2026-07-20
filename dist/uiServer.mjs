@@ -13,6 +13,10 @@ import { URL } from 'node:url';
 // objects/fields (live via the Describe API).
 const PORT = 3000;
 const ORG_ALIAS = 'tallydemo';
+const MAP_DIR = './mappings';
+function ensureMapDir() { if (!fs.existsSync(MAP_DIR))
+    fs.mkdirSync(MAP_DIR); }
+function mapSlug(name) { return (String(name).replace(/[^a-zA-Z0-9 _-]/g, '').trim()) || 'mapping'; }
 let authCache = null;
 function runSf(args) {
     return new Promise((resolve) => {
@@ -81,7 +85,7 @@ function matchFilter(value, op, target) {
     }
 }
 async function upsertRecords(auth, objectApi, externalIdField, rows) {
-    const result = { total: rows.length, success: 0, failed: 0, errors: [] };
+    const result = { total: rows.length, success: 0, failed: 0, errors: [], keyToId: {} };
     for (let i = 0; i < rows.length; i += 200) {
         const batch = rows.slice(i, i + 200);
         const payload = { allOrNone: false, records: batch.map(r => ({ attributes: { type: objectApi }, ...r })) };
@@ -97,29 +101,61 @@ async function upsertRecords(auth, objectApi, externalIdField, rows) {
                 result.errors.push(JSON.stringify(body).slice(0, 300));
             continue;
         }
-        for (const res of body) {
-            if (res.success)
+        body.forEach((res, j) => {
+            if (res.success) {
                 result.success++;
+                const key = batch[j][externalIdField];
+                if (key != null && res.id)
+                    result.keyToId[String(key)] = res.id; // remember ext-id -> SF id for children
+            }
             else {
                 result.failed++;
                 if (result.errors.length < 10)
                     result.errors.push((res.errors || []).map((e) => `${e.statusCode || ''} ${e.message}`).join('; '));
             }
-        }
+        });
     }
     return result;
 }
-async function runMapping() {
+// order object mappings so a parent runs before any child that references it
+function orderMappings(oms) {
+    const byId = Object.fromEntries(oms.map(m => [m.id, m]));
+    const placed = new Set(), out = [];
+    let guard = 0;
+    while (out.length < oms.length && guard++ < 200) {
+        for (const om of oms) {
+            if (placed.has(om.id))
+                continue;
+            const deps = (om.relationships || []).map((r) => r.parentMapping).filter((p) => byId[p] && p !== om.id);
+            if (deps.every((d) => placed.has(d))) {
+                out.push(om);
+                placed.add(om.id);
+            }
+        }
+    }
+    for (const om of oms)
+        if (!placed.has(om.id))
+            out.push(om); // cycle safety
+    return out;
+}
+async function runMapping(name) {
     const auth = await getAuth();
     if (!auth)
         throw new Error('not connected to Salesforce');
-    if (!fs.existsSync('./mapping.json'))
-        throw new Error('no mapping saved yet');
-    const mapping = JSON.parse(fs.readFileSync('./mapping.json', 'utf8'));
+    const file = `${MAP_DIR}/${mapSlug(name)}.json`;
+    if (!fs.existsSync(file))
+        throw new Error('no mapping saved yet — save one first');
+    const mapping = JSON.parse(fs.readFileSync(file, 'utf8'));
     await extractTallyToJson(); // pull fresh Tally data as ./csv/<table>.json
+    const oms = orderMappings(mapping.objectMappings || []);
+    const byId = Object.fromEntries(oms.map(m => [m.id, m]));
+    // per parent mapping: the upserted rows + ext-id->SF-id, so children can match on ANY parent field
+    const parentData = {};
     const out = [];
-    for (const om of (mapping.objectMappings || [])) {
+    for (const om of oms) {
         const file = `./csv/${om.sourceObject}.json`;
+        if (!om.targetObject || !om.externalIdField)
+            continue;
         if (!fs.existsSync(file)) {
             out.push({ sourceObject: om.sourceObject, targetObject: om.targetObject, total: 0, success: 0, failed: 0, errors: [`source ${om.sourceObject} produced no data`] });
             continue;
@@ -127,10 +163,42 @@ async function runMapping() {
         let rows = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
         if (om.filter && om.filter.field)
             rows = rows.filter(r => matchFilter(r[om.filter.field], om.filter.operator, om.filter.value));
-        const mapped = rows.map(r => { const o = {}; for (const f of om.fields)
-            o[f.target] = r[f.source]; return o; });
+        // build a value -> SF id lookup for each relationship, keyed on the parent's chosen match field
+        const relLookups = (om.relationships || []).map((rel) => {
+            const parent = byId[rel.parentMapping];
+            const pd = parentData[rel.parentMapping];
+            const matchField = rel.parentMatchField || (parent && parent.externalIdField);
+            const map = {};
+            if (pd && matchField)
+                for (const prow of pd.rows) {
+                    const sfId = pd.keyToId[String(prow[pd.extId])];
+                    const mv = prow[matchField];
+                    if (sfId && mv != null && mv !== '')
+                        map[String(mv)] = sfId;
+                }
+            return { rel, map };
+        });
+        const mapped = rows.map(r => {
+            const o = {};
+            for (const f of (om.fields || []))
+                o[f.target] = ('constant' in f) ? f.constant : r[f.source];
+            let orphan = false;
+            for (const { rel, map } of relLookups) {
+                const key = r[rel.sourceKey];
+                const pid = (key != null && key !== '') ? map[String(key)] : undefined;
+                if (pid)
+                    o[rel.targetField] = pid; // resolved parent SF id
+                else
+                    orphan = true; // parent not found -> skip this child
+            }
+            return orphan ? null : o;
+        }).filter(Boolean);
+        const skipped = rows.length - mapped.length;
         const res = await upsertRecords(auth, om.targetObject, om.externalIdField, mapped);
-        out.push({ sourceObject: om.sourceObject, targetObject: om.targetObject, ...res });
+        if (skipped)
+            res.errors.unshift(`${skipped} row(s) skipped (no matching parent)`);
+        parentData[om.id] = { rows: mapped, keyToId: res.keyToId, extId: om.externalIdField };
+        out.push({ sourceObject: om.sourceObject, targetObject: om.targetObject, total: res.total, success: res.success, failed: res.failed, errors: res.errors });
     }
     return out;
 }
@@ -194,22 +262,41 @@ const server = http.createServer(async (req, res) => {
             const fields = (d.fields || []).map((f) => ({
                 name: f.name, label: f.label, type: f.type,
                 createable: f.createable, externalId: f.externalId, idLookup: f.idLookup,
-                required: f.createable && !f.nillable && !f.defaultedOnCreate
+                required: f.createable && !f.nillable && !f.defaultedOnCreate,
+                reference: f.type === 'reference',
+                referenceTo: f.referenceTo || [],
+                relationshipName: f.relationshipName || null
             }));
             return json(200, { name, fields });
         }
-        // --- mapping persistence ---
-        if (url.pathname === '/api/mapping/save' && req.method === 'POST') {
-            fs.writeFileSync('./mapping.json', await readBody(req));
-            return json(200, { saved: true });
+        // --- named mapping persistence (mappings/<name>.json) ---
+        if (url.pathname === '/api/mappings') {
+            ensureMapDir();
+            const names = fs.readdirSync(MAP_DIR).filter(f => f.endsWith('.json')).map(f => f.replace(/\.json$/, ''));
+            return json(200, { mappings: names });
         }
-        if (url.pathname === '/api/mapping/load') {
-            const raw = fs.existsSync('./mapping.json') ? fs.readFileSync('./mapping.json', 'utf8') : '{"objectMappings":[]}';
-            return send(200, 'application/json', raw);
+        if (url.pathname === '/api/mappings/get') {
+            const file = `${MAP_DIR}/${mapSlug(url.searchParams.get('name') || '')}.json`;
+            if (!fs.existsSync(file))
+                return json(404, { error: 'not found' });
+            return send(200, 'application/json', fs.readFileSync(file, 'utf8'));
+        }
+        if (url.pathname === '/api/mappings/save' && req.method === 'POST') {
+            ensureMapDir();
+            const doc = JSON.parse(await readBody(req));
+            const name = mapSlug(doc.name);
+            fs.writeFileSync(`${MAP_DIR}/${name}.json`, JSON.stringify({ name, objectMappings: doc.objectMappings || [] }, null, 2));
+            return json(200, { saved: true, name });
+        }
+        if (url.pathname === '/api/mappings/delete' && req.method === 'POST') {
+            const file = `${MAP_DIR}/${mapSlug(JSON.parse(await readBody(req)).name)}.json`;
+            if (fs.existsSync(file))
+                fs.unlinkSync(file);
+            return json(200, { deleted: true });
         }
         if (url.pathname === '/api/run' && req.method === 'POST') {
             try {
-                return json(200, { results: await runMapping() });
+                return json(200, { results: await runMapping(mapSlug(JSON.parse(await readBody(req) || '{}').name || '')) });
             }
             catch (e) {
                 return json(200, { error: String(e?.message || e) });

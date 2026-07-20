@@ -6,123 +6,105 @@
 <title>Tally → Salesforce Connector</title>
 <style>
   :root{
-    --bg:#0f172a; --canvas:#f1f5f9; --card:#ffffff; --line:#e2e8f0; --line2:#eef2f7;
+    --bg:#0f172a; --canvas:#f1f5f9; --card:#fff; --line:#e2e8f0; --line2:#eef2f7;
     --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
     --accent:#4f46e5; --accent-d:#4338ca; --tally:#d97706; --sf:#0176d3;
-    --ok:#16a34a; --okbg:#dcfce7; --shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.06);
-    --radius:12px;
+    --ok:#16a34a; --okbg:#dcfce7; --shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.06); --radius:12px;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    color:var(--ink);background:var(--canvas);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;height:100vh;overflow:hidden}
-
-  /* ---- top bar ---- */
-  .appbar{height:60px;flex:0 0 60px;background:var(--card);border-bottom:1px solid var(--line);
-    display:flex;align-items:center;justify-content:space-between;padding:0 22px;z-index:5}
-  .brand{display:flex;align-items:center;gap:12px;font-weight:650;font-size:15px;letter-spacing:-.01em}
-  .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--tally),var(--sf));
-    display:grid;place-items:center;color:#fff;font-size:15px;box-shadow:var(--shadow)}
-  .brand small{color:var(--faint);font-weight:500;margin-left:2px}
+  body{margin:0;font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);
+    background:var(--canvas);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  .appbar{height:58px;flex:0 0 58px;background:var(--card);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 22px;z-index:6}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:650;font-size:15px}
+  .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--tally),var(--sf));display:grid;place-items:center;color:#fff;font-size:15px}
+  .brand small{color:var(--faint);font-weight:500}
   .appbar-right{display:flex;align-items:center;gap:12px}
-  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);
-    background:#f8fafc;border:1px solid var(--line);padding:6px 12px;border-radius:20px}
+  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);background:#f8fafc;border:1px solid var(--line);padding:6px 12px;border-radius:20px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
   .status.on{color:var(--ink2)} .status.on .dot{background:var(--ok);box-shadow:0 0 0 3px var(--okbg)}
-
-  button{font:inherit;font-weight:550;border:1px solid transparent;border-radius:9px;padding:9px 16px;cursor:pointer;
-    background:var(--accent);color:#fff;transition:.15s;box-shadow:var(--shadow)}
-  button:hover{background:var(--accent-d)}
-  button.ghost{background:var(--card);color:var(--ink2);border-color:var(--line)}
-  button.ghost:hover{background:#f8fafc}
+  button{font:inherit;font-weight:550;border:1px solid transparent;border-radius:9px;padding:9px 15px;cursor:pointer;background:var(--accent);color:#fff;transition:.15s}
+  button:hover{background:var(--accent-d)} button.ghost{background:#fff;color:var(--ink2);border:1px solid var(--line)} button.ghost:hover{background:#f8fafc}
+  button.sync{background:var(--ok)} button.sync:hover{background:#15803d}
+  button.mini{padding:4px 10px;font-size:12px;border-radius:7px}
   button:disabled{opacity:.5;cursor:not-allowed}
   button.big{padding:13px 26px;font-size:15px;border-radius:11px}
+  select,input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
 
-  /* ---- hero (disconnected) ---- */
-  .hero{flex:1;display:grid;place-items:center;
-    background:radial-gradient(1200px 600px at 50% -10%,#e0e7ff 0,transparent 60%),var(--canvas)}
-  .hero-card{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);
-    padding:48px 46px;max-width:520px;text-align:center}
+  .hero{flex:1;display:grid;place-items:center;background:radial-gradient(1200px 600px at 50% -10%,#e0e7ff 0,transparent 60%),var(--canvas)}
+  .hero-card{background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:48px 46px;max-width:520px;text-align:center}
   .hero-card .logo{width:56px;height:56px;border-radius:16px;font-size:26px;margin:0 auto 20px}
-  .hero-card h1{font-size:24px;margin:0 0 10px;letter-spacing:-.02em}
-  .hero-card p{color:var(--muted);margin:0 0 26px;font-size:15px}
-  .hero-steps{display:flex;gap:8px;justify-content:center;margin-top:28px;color:var(--faint);font-size:12.5px;flex-wrap:wrap}
-  .hero-steps span{background:#f8fafc;border:1px solid var(--line);padding:5px 11px;border-radius:8px}
+  .hero-card h1{font-size:24px;margin:0 0 10px} .hero-card p{color:var(--muted);margin:0 0 26px;font-size:15px}
 
-  /* ---- workspace (connected) ---- */
   .workspace{flex:1;display:flex;flex-direction:column;min-height:0}
-  .toolbar{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--line);
-    padding:14px 22px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .docbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 18px;background:#f8fafc;border-bottom:1px solid var(--line)}
+  .docbar .dlabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
+  .docbar #docName{min-width:300px;font-weight:600}
+  .docbar select{min-width:170px}
+  .docbar .spacer{flex:1}
+  /* mapping tabs bar */
+  .mapbar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto}
+  .maptab{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;cursor:pointer;white-space:nowrap;font-size:13px;font-weight:550;color:var(--ink2)}
+  .maptab.active{border-color:var(--accent);background:#eef2ff;color:var(--accent)}
+  .maptab .x{color:var(--faint);font-weight:700} .maptab .x:hover{color:#b42318}
+  .mapbar .spacer{flex:1}
+  .savemsg{font-size:13px;color:var(--ok);font-weight:600}
+
+  #editor{flex:1;display:flex;flex-direction:column;min-height:0}
+  .toolbar{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
   .fieldset{display:flex;flex-direction:column;gap:5px}
   .fieldset label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-  select{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);
-    min-width:210px;cursor:pointer;transition:.15s}
-  select:hover{border-color:#cbd5e1} select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
-  .flow-arrow{align-self:center;color:var(--faint);font-size:20px;padding-bottom:6px}
+  .toolbar select{min-width:200px}
+  .flow-arrow{align-self:center;color:var(--faint);font-size:18px;padding-bottom:8px}
   .toolbar .spacer{flex:1}
-  .savemsg{font-size:13px;color:var(--ok);font-weight:550;align-self:center}
 
-  .filterbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:11px 22px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:13px;flex-wrap:wrap}
+  .filterbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 22px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:13px;flex-wrap:wrap}
   .filterbar .flabel{font-weight:700;color:var(--tally);text-transform:uppercase;font-size:11px;letter-spacing:.05em}
-  .filterbar .muted{color:#92702a}
-  .filterbar select{min-width:150px;padding:7px 9px}
-  .filterbar input{padding:7px 10px;border:1px solid #fde68a;border-radius:8px;font:inherit;min-width:170px;background:#fff}
-  .filterbar input:focus{outline:none;border-color:var(--tally);box-shadow:0 0 0 3px #fef3c7}
+  .filterbar .muted{color:#92702a} .filterbar select{min-width:150px} .filterbar input{border-color:#fde68a;min-width:160px}
 
-  .panes{flex:1;display:grid;grid-template-columns:340px 1fr;min-height:0}
+  .panes{flex:1;display:grid;grid-template-columns:320px 1fr;min-height:0}
   .pane{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .pane.source{border-right:1px solid var(--line);background:#fff}
-  .pane.map{background:var(--canvas)}
-  .pane-head{flex:0 0 auto;padding:14px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:10px}
-  .pane-head .chip{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:6px}
+  .pane-head{flex:0 0 auto;padding:13px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:10px}
+  .chip{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:6px}
   .chip.tally{color:var(--tally);background:#fef3c7} .chip.sf{color:var(--sf);background:#e0effd}
-  .pane-head h3{margin:0;font-size:14px;font-weight:600}
-  .pane-head .count{margin-left:auto;color:var(--faint);font-size:12px}
+  .pane-head h3{margin:0;font-size:14px} .pane-head .count{margin-left:auto;color:var(--faint);font-size:12px}
   .pane-search{flex:0 0 auto;padding:10px 20px;border-bottom:1px solid var(--line2)}
-  .pane.map .pane-search{background:transparent}
-  .search{width:100%;padding:8px 12px 8px 32px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff
+  .search{width:100%;padding:8px 12px 8px 32px;border:1px solid var(--line);border-radius:8px;background:#fff
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") 10px center no-repeat}
-  .search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
   .pane-body{flex:1;overflow:auto;padding:14px 20px}
+  .srcfield{display:flex;gap:10px;padding:8px 10px;border-radius:8px} .srcfield:hover{background:#f8fafc}
+  .srcfield .n{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--ink2)} .srcfield .meta{margin-left:auto;color:var(--faint);font-size:11.5px}
 
-  /* source field list */
-  .srcfield{display:flex;align-items:baseline;gap:10px;padding:8px 10px;border-radius:8px}
-  .srcfield:hover{background:#f8fafc}
-  .srcfield .n{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--ink2)}
-  .srcfield .meta{margin-left:auto;color:var(--faint);font-size:11.5px}
+  /* relationships */
+  .rel-section{background:#eff6ff;border:1px solid #bfdbfe;border-radius:11px;padding:12px 14px;margin-bottom:16px}
+  .rel-head{display:flex;align-items:center;gap:10px;font-weight:600;font-size:13px;color:var(--sf);margin-bottom:8px}
+  .relrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin-bottom:7px}
+  .relrow select{min-width:150px;padding:6px 8px;font-size:12.5px} .relrow .rx{color:var(--faint);cursor:pointer;font-weight:700;padding:0 4px} .relrow .rx:hover{color:#b42318}
 
-  /* mapping rows */
-  .maprow{display:grid;grid-template-columns:1fr 34px 1fr;align-items:center;gap:12px;
-    background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+  .maprow{display:grid;grid-template-columns:1fr 30px 1fr;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin-bottom:9px;box-shadow:var(--shadow)}
   .maprow.req{border-left:3px solid var(--sf)}
-  .maprow .tgt{display:flex;flex-direction:column;gap:2px}
-  .maprow .tgt .lbl{font-weight:600;font-size:13.5px}
-  .maprow .tgt .api{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)}
-  .maprow .arrow{text-align:center;color:var(--faint);font-size:16px}
-  .maprow select{min-width:0;width:100%}
-  .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px;vertical-align:middle}
-  .badge.ext{color:var(--accent);background:#eef2ff} .badge.req{color:#b42318;background:#fee4e2}
-  .maphint{color:var(--muted);text-align:center;margin-top:60px;font-size:14px}
-  .maphint .big{font-size:34px;margin-bottom:10px;opacity:.4}
+  .maprow .src{display:flex;flex-direction:column;gap:6px} .maprow .src select,.maprow .src input{width:100%}
+  .maprow .arrow{text-align:center;color:var(--faint)}
+  .maprow .tgt .lbl{font-weight:600;font-size:13px} .maprow .tgt .api{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)}
+  .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px}
+  .badge.ext{color:var(--accent);background:#eef2ff} .badge.req{color:#b42318;background:#fee4e2} .badge.rel{color:var(--sf);background:#e0effd}
+  .maphint{color:var(--muted);text-align:center;margin-top:50px} .maphint .big{font-size:34px;opacity:.4;margin-bottom:10px}
 
-  button.sync{background:var(--ok)} button.sync:hover{background:#15803d}
   .modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:grid;place-items:center;z-index:50}
-  .modal-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:560px;max-width:92vw;max-height:82vh;overflow:auto;padding:26px}
+  .modal-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:580px;max-width:92vw;max-height:82vh;overflow:auto;padding:26px}
   .modal-card h3{margin:0 0 16px;font-size:18px}
-  .resrow{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
-  .resrow .head{font-weight:600;margin-bottom:6px}
-  .resrow .ok{color:var(--ok);font-weight:600} .resrow .err{color:#b42318}
-  .resrow ul{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:#b42318}
+  .resrow{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:11px}
+  .resrow .head{font-weight:600;margin-bottom:5px} .resrow .ok{color:var(--ok);font-weight:600} .resrow .err{color:#b42318}
+  .resrow ul{margin:7px 0 0;padding-left:18px;font-size:12.5px;color:#b42318}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .hidden{display:none!important}
-  ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px;border:2px solid var(--canvas)}
-  .pane.source ::-webkit-scrollbar-thumb{border-color:#fff}
+  ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px;border:2px solid var(--canvas)}
 </style>
 </head>
 <body>
-
 <div class="appbar">
   <div class="brand"><span class="logo">⚡</span> Tally <small>→</small> Salesforce Connector</div>
   <div class="appbar-right">
@@ -132,209 +114,276 @@
   </div>
 </div>
 
-<!-- disconnected -->
 <div id="hero" class="hero">
   <div class="hero-card">
-    <div class="logo">⚡</div>
-    <h1>Connect your Salesforce org</h1>
-    <p>Log in through Salesforce in your browser — no tokens, keys, or secrets to paste. You just approve access, and we take it from there.</p>
+    <div class="logo">⚡</div><h1>Connect your Salesforce org</h1>
+    <p>Log in through Salesforce in your browser — no tokens, keys, or apps to set up. You just approve access.</p>
     <button class="big" onclick="connectSf()">Connect to Salesforce</button>
-    <div class="hero-steps"><span>1 · Log in</span><span>2 · Pick a Tally table</span><span>3 · Pick a Salesforce object</span><span>4 · Map fields</span></div>
   </div>
 </div>
 
-<!-- connected -->
 <div id="app" class="workspace hidden">
-  <div class="toolbar">
-    <div class="fieldset"><label>Source · Tally table</label><select id="tallyTable" onchange="showTallyFields()"></select></div>
-    <div class="flow-arrow">→</div>
-    <div class="fieldset"><label>Target · Salesforce object</label><select id="sfObject" onchange="loadSfFields()"><option value="">Loading…</option></select></div>
-    <div class="fieldset"><label>External ID (upsert key)</label><select id="externalId"></select></div>
+  <div class="docbar">
+    <span class="dlabel">Mapping</span>
+    <input id="docName" placeholder="Name this mapping — e.g. Sales → Salesforce">
+    <div class="spacer"></div>
+    <span class="dlabel">Open saved</span>
+    <select id="loadSelect" onchange="onLoadSelect()"><option value="">— saved mappings —</option></select>
+    <button class="ghost" onclick="newDoc()">New</button>
+    <button class="ghost" onclick="deleteDoc()">Delete</button>
+  </div>
+  <div class="mapbar">
+    <div id="mapTabs" style="display:flex;gap:8px"></div>
+    <button class="ghost" onclick="addMapping()">＋ Add object mapping</button>
     <div class="spacer"></div>
     <span id="saveMsg" class="savemsg"></span>
-    <button id="clearBtn" class="ghost" onclick="clearMapping()" disabled>Clear mapping</button>
-    <button id="saveBtn" onclick="saveMapping()" disabled>Save mapping</button>
-    <button id="syncBtn" class="sync" onclick="runSync()">▶ Sync to Salesforce</button>
+    <button class="ghost" onclick="saveAll()">Save</button>
+    <button class="sync" onclick="runSync()">▶ Sync all</button>
   </div>
 
-  <div class="filterbar">
-    <span class="flabel">Filter</span>
-    <span class="muted">sync only rows where</span>
-    <select id="filterField"><option value="">— all rows (no filter) —</option></select>
-    <select id="filterOp">
-      <option value="==">equals</option>
-      <option value="!=">does not equal</option>
-      <option value=">">greater than</option>
-      <option value=">=">at least</option>
-      <option value="<">less than</option>
-      <option value="<=">at most</option>
-    </select>
-    <input id="filterValue" placeholder="value — e.g. Sales" />
+  <div id="noMapping" class="hero" style="flex:1">
+    <div style="text-align:center;color:var(--muted)"><div style="font-size:38px;opacity:.4">🗺️</div>
+      <p>No object mappings yet.<br>Click <b>＋ Add object mapping</b> to map a Tally table to a Salesforce object.</p></div>
   </div>
 
-  <div class="panes">
-    <div class="pane source">
-      <div class="pane-head"><span class="chip tally">Tally</span><h3 id="srcTitle">Source fields</h3><span class="count" id="srcCount"></span></div>
-      <div class="pane-search"><input id="srcSearch" class="search" placeholder="Search Tally fields…" oninput="filterSrc()"></div>
-      <div class="pane-body" id="tallyFields"></div>
+  <div id="editor" class="hidden">
+    <div class="toolbar">
+      <div class="fieldset"><label>Source · Tally table</label><select id="tallyTable" onchange="onSourceChange()"></select></div>
+      <div class="flow-arrow">→</div>
+      <div class="fieldset"><label>Target · Salesforce object</label><select id="sfObject" onchange="onTargetChange()"></select></div>
+      <div class="fieldset"><label>External ID (upsert key)</label><select id="externalId"></select></div>
     </div>
-    <div class="pane map">
-      <div class="pane-head"><span class="chip sf">Salesforce</span><h3 id="mapTitle">Field mapping</h3><span class="count" id="mapCount"></span></div>
-      <div class="pane-search hidden" id="mapSearchBar"><input id="mapSearch" class="search" placeholder="Search Salesforce fields…" oninput="filterMap()"></div>
-      <div class="pane-body" id="mapBody">
-        <div class="maphint" id="mapHint"><div class="big">🔗</div>Choose a Salesforce object to start mapping fields.</div>
-        <div id="mapRows" class="hidden"></div>
+    <div class="filterbar">
+      <span class="flabel">Filter</span><span class="muted">sync only rows where</span>
+      <select id="filterField"><option value="">— all rows —</option></select>
+      <select id="filterOp"><option value="==">equals</option><option value="!=">does not equal</option><option value=">">greater than</option><option value=">=">at least</option><option value="<">less than</option><option value="<=">at most</option></select>
+      <input id="filterValue" placeholder="value — e.g. Sales" />
+    </div>
+    <div class="panes">
+      <div class="pane source">
+        <div class="pane-head"><span class="chip tally">Tally</span><h3 id="srcTitle">Source fields</h3><span class="count" id="srcCount"></span></div>
+        <div class="pane-search"><input id="srcSearch" class="search" placeholder="Search Tally fields…" oninput="filterSrc()"></div>
+        <div class="pane-body" id="tallyFields"></div>
+      </div>
+      <div class="pane map">
+        <div class="pane-head"><span class="chip sf">Salesforce</span><h3 id="mapTitle">Field mapping</h3><span class="count" id="mapCount"></span></div>
+        <div class="pane-search"><input id="mapSearch" class="search" placeholder="Search Salesforce fields…" oninput="filterMap()"></div>
+        <div class="pane-body">
+          <div class="rel-section" id="relSection">
+            <div class="rel-head">🔗 Relationships (link to a parent object)<button class="mini ghost" onclick="addRel()">＋ link</button></div>
+            <div id="relRows"></div>
+          </div>
+          <div id="mapRows"></div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <div id="runModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
-  <div class="modal-card">
-    <h3 id="runTitle">Sync results</h3>
-    <div id="runResults"></div>
-    <div style="text-align:right;margin-top:8px"><button class="ghost" onclick="document.getElementById('runModal').classList.add('hidden')">Close</button></div>
-  </div>
+  <div class="modal-card"><h3 id="runTitle">Sync results</h3><div id="runResults"></div>
+    <div style="text-align:right;margin-top:8px"><button class="ghost" onclick="document.getElementById('runModal').classList.add('hidden')">Close</button></div></div>
 </div>
 
 <script>
-let tallyTables = [], sfFields = [];
-
-async function runSync(){
-  const btn = document.getElementById('syncBtn');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Syncing…';
-  document.getElementById('runTitle').textContent = 'Syncing to Salesforce…';
-  document.getElementById('runResults').innerHTML = '<p style="color:#64748b">Extracting from Tally, mapping, and upserting… this can take a few seconds.</p>';
-  document.getElementById('runModal').classList.remove('hidden');
-  let data;
-  try { data = await (await fetch('/api/run',{method:'POST'})).json(); }
-  catch(e){ data = { error:String(e) }; }
-  btn.disabled = false; btn.innerHTML = '▶ Sync to Salesforce';
-  showResults(data);
-}
-function showResults(data){
-  document.getElementById('runTitle').textContent = 'Sync results';
-  const box = document.getElementById('runResults');
-  if(data.error){ box.innerHTML = `<p class="err">⚠ ${data.error}</p>`; return; }
-  const rows = data.results || [];
-  if(!rows.length){ box.innerHTML = '<p>Nothing to sync — is a mapping saved?</p>'; return; }
-  box.innerHTML = rows.map(r=>`<div class="resrow">
-    <div class="head">${r.sourceObject} → ${r.targetObject}</div>
-    <div><span class="ok">✓ ${r.success} upserted</span>${r.failed?` · <span class="err">${r.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${r.total})</span></div>
-    ${(r.errors&&r.errors.length)?`<ul>${r.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}
-  </div>`).join('');
-}
+let tallyTables = [], sfObjects = [];
+const sfFieldCache = {};
+let state = { name:'', mappings: [], cur: -1, savedNames: [] };
+const genId = () => 'm' + Math.random().toString(36).slice(2,7);
+const normalizeOm = o => ({ id:o.id||genId(), sourceObject:o.sourceObject||'', targetObject:o.targetObject||'', externalIdField:o.externalIdField||'', filter:o.filter||null, fields:o.fields||[], relationships:o.relationships||[] });
 
 async function init(){
   const s = await (await fetch('/api/session')).json();
   const on = s.connected;
-  document.getElementById('statusText').textContent = on ? ('Connected · ' + (s.user||'')) : 'Not connected';
-  document.getElementById('status').className = 'status' + (on?' on':'');
+  document.getElementById('statusText').textContent = on ? ('Connected · '+(s.user||'')) : 'Not connected';
+  document.getElementById('status').className = 'status'+(on?' on':'');
   document.getElementById('connectBtn').classList.toggle('hidden', on);
   document.getElementById('disconnectBtn').classList.toggle('hidden', !on);
   document.getElementById('hero').classList.toggle('hidden', on);
   document.getElementById('app').classList.toggle('hidden', !on);
-  if(on){ await loadTally(); await loadSfObjects(); }
+  if(on){
+    await loadTally(); await loadSfObjects(); await loadDocList();
+    if(state.savedNames.length){ await loadDoc(state.savedNames[0]); } else { newDoc(); }
+  }
 }
-async function connectSf(){
-  const st = document.getElementById('statusText');
-  document.getElementById('connectBtn').disabled = true;
-  st.textContent = 'Opening Salesforce login…';
-  try { await fetch('/api/connect', { method:'POST' }); } catch(e){}
-  document.getElementById('connectBtn').disabled = false;
-  await init();
+async function loadDocList(){ state.savedNames = (await (await fetch('/api/mappings')).json()).mappings || []; renderDocList(); }
+function renderDocList(){ document.getElementById('loadSelect').innerHTML = '<option value="">— saved mappings —</option>' + state.savedNames.map(n=>`<option value="${n}">${n}</option>`).join(''); }
+function onLoadSelect(){ const n=document.getElementById('loadSelect').value; if(n) loadDoc(n); }
+async function loadDoc(name){
+  const d = await (await fetch('/api/mappings/get?name='+encodeURIComponent(name))).json();
+  state.name = d.name||name; state.mappings = (d.objectMappings||[]).map(normalizeOm); state.cur = state.mappings.length?0:-1;
+  document.getElementById('docName').value = state.name; document.getElementById('loadSelect').value = name;
+  renderTabs(); if(state.cur>=0) loadEditor(); else showNoMapping();
 }
+function newDoc(){ state.name=''; state.mappings=[]; state.cur=-1; document.getElementById('docName').value=''; document.getElementById('loadSelect').value=''; renderTabs(); showNoMapping(); }
+async function deleteDoc(){
+  const n=document.getElementById('docName').value.trim(); if(!n) return;
+  if(!confirm('Delete mapping "'+n+'"?')) return;
+  await fetch('/api/mappings/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});
+  await loadDocList(); newDoc();
+}
+async function connectSf(){ const b=document.getElementById('connectBtn'); b.disabled=true; document.getElementById('statusText').textContent='Opening Salesforce login…'; try{await fetch('/api/connect',{method:'POST'});}catch(e){} b.disabled=false; await init(); }
 async function disconnect(){ await fetch('/api/disconnect'); location.reload(); }
 
-function filterSrc(){
-  const q = document.getElementById('srcSearch').value.toLowerCase();
-  document.querySelectorAll('#tallyFields .srcfield').forEach(el=>{ el.style.display = el.textContent.toLowerCase().includes(q)?'':'none'; });
-}
-function filterMap(){
-  const q = document.getElementById('mapSearch').value.toLowerCase();
-  document.querySelectorAll('#mapRows .maprow').forEach(el=>{ el.style.display = (el.dataset.name||'').includes(q)?'':'none'; });
-}
-function clearMapping(){
-  document.querySelectorAll('#mapRows select').forEach(s=> s.value='');
-  const m = document.getElementById('saveMsg'); m.textContent='Cleared'; setTimeout(()=>m.textContent='', 1500);
-}
+async function loadTally(){ tallyTables = (await (await fetch('/api/tally/tables')).json()).tables; }
+async function loadSfObjects(){ sfObjects = (await (await fetch('/api/salesforce/objects')).json()).objects || []; }
+async function getSfFields(obj){ if(!obj) return []; if(sfFieldCache[obj]) return sfFieldCache[obj]; const d = await (await fetch('/api/salesforce/object/'+encodeURIComponent(obj))).json(); sfFieldCache[obj]=d.fields||[]; return sfFieldCache[obj]; }
 
-async function loadTally(){
-  const d = await (await fetch('/api/tally/tables')).json();
-  tallyTables = d.tables;
-  document.getElementById('tallyTable').innerHTML =
-    tallyTables.map(t=>`<option value="${t.name}">${t.name}${t.isMaster?'  · master':''}</option>`).join('');
-  showTallyFields();
+function tabLabel(m){ return (m.targetObject || 'new') + (m.sourceObject? ' ← '+m.sourceObject : ''); }
+function renderTabs(){
+  document.getElementById('mapTabs').innerHTML = state.mappings.map((m,i)=>
+    `<div class="maptab${i===state.cur?' active':''}" onclick="selectTab(${i})">${tabLabel(m)}<span class="x" onclick="event.stopPropagation();deleteMapping(${i})">✕</span></div>`).join('');
 }
+function showNoMapping(){ document.getElementById('editor').classList.add('hidden'); document.getElementById('noMapping').classList.remove('hidden'); }
+function addMapping(){ captureCurrent(); state.mappings.push({ id:genId(), sourceObject: tallyTables[0]?.name||'', targetObject:'', externalIdField:'', filter:null, fields:[], relationships:[] }); state.cur=state.mappings.length-1; renderTabs(); loadEditor(); }
+function deleteMapping(i){ state.mappings.splice(i,1); if(state.cur>=state.mappings.length) state.cur=state.mappings.length-1; renderTabs(); if(state.cur>=0) loadEditor(); else showNoMapping(); }
+function selectTab(i){ captureCurrent(); state.cur=i; renderTabs(); loadEditor(); }
+
+function curM(){ return state.mappings[state.cur]; }
 function curTable(){ return tallyTables.find(t=>t.name===document.getElementById('tallyTable').value); }
-function showTallyFields(){
+
+async function loadEditor(){
+  const m = curM(); if(!m) return showNoMapping();
+  document.getElementById('noMapping').classList.add('hidden');
+  document.getElementById('editor').classList.remove('hidden');
+  // source
+  document.getElementById('tallyTable').innerHTML = tallyTables.map(t=>`<option value="${t.name}">${t.name}${t.isMaster?' · master':''}</option>`).join('');
+  document.getElementById('tallyTable').value = m.sourceObject || tallyTables[0]?.name;
+  showSourceFields();
+  // target
+  document.getElementById('sfObject').innerHTML = '<option value="">— choose object —</option>' + sfObjects.map(o=>`<option value="${o.name}">${o.label} · ${o.name}</option>`).join('');
+  document.getElementById('sfObject').value = m.targetObject || '';
+  // filter
+  applyFilterToUI(m);
+  // target fields + rows + relationships
+  await refreshTarget();
+}
+function showSourceFields(){
   const t = curTable(); if(!t) return;
   document.getElementById('srcTitle').textContent = t.name;
-  document.getElementById('srcCount').textContent = t.fields.length + ' fields';
-  document.getElementById('tallyFields').innerHTML = t.fields.map(f=>
-    `<div class="srcfield"><span class="n">${f.name}</span><span class="meta">${f.datatype}</span></div>`).join('');
-  document.getElementById('filterField').innerHTML = '<option value="">— all rows (no filter) —</option>' +
-    t.fields.map(f=>`<option value="${f.name}">${f.name}</option>`).join('');
-  document.getElementById('filterValue').value = '';
+  document.getElementById('srcCount').textContent = t.fields.length+' fields';
+  document.getElementById('tallyFields').innerHTML = t.fields.map(f=>`<div class="srcfield"><span class="n">${f.name}</span><span class="meta">${f.datatype}</span></div>`).join('');
+  document.getElementById('filterField').innerHTML = '<option value="">— all rows —</option>' + t.fields.map(f=>`<option value="${f.name}">${f.name}</option>`).join('');
   filterSrc();
-  buildMap();
+}
+function applyFilterToUI(m){
+  document.getElementById('filterField').value = m.filter?.field || '';
+  document.getElementById('filterOp').value = m.filter?.operator || '==';
+  document.getElementById('filterValue').value = m.filter?.value || '';
+}
+function onSourceChange(){ const m=curM(); m.sourceObject=document.getElementById('tallyTable').value; m.filter=null; showSourceFields(); applyFilterToUI(m); buildMapRows(); renderRelationships(); renderTabs(); }
+async function onTargetChange(){ const m=curM(); m.targetObject=document.getElementById('sfObject').value; renderTabs(); await refreshTarget(); }
+
+async function refreshTarget(){
+  const m = curM();
+  const fields = await getSfFields(m.targetObject);
+  const ext = fields.filter(f=>f.externalId||f.idLookup);
+  document.getElementById('externalId').innerHTML = (ext.length?ext:fields).map(f=>`<option value="${f.name}">${f.name}${f.externalId?' (external id)':''}</option>`).join('');
+  if(m.externalIdField) document.getElementById('externalId').value = m.externalIdField;
+  buildMapRows(); renderRelationships();
 }
 
-async function loadSfObjects(){
-  const d = await (await fetch('/api/salesforce/objects')).json();
-  if(d.error){ document.getElementById('sfObject').innerHTML='<option>— reconnect —</option>'; return; }
-  document.getElementById('sfObject').innerHTML = '<option value="">— choose object —</option>' +
-    d.objects.map(o=>`<option value="${o.name}">${o.label} · ${o.name}</option>`).join('');
-}
-async function loadSfFields(){
-  const name = document.getElementById('sfObject').value;
-  if(!name){ sfFields=[]; buildMap(); return; }
-  document.getElementById('mapTitle').textContent = 'Field mapping';
-  const d = await (await fetch('/api/salesforce/object/'+encodeURIComponent(name))).json();
-  sfFields = d.fields;
-  const extIds = sfFields.filter(f=>f.externalId||f.idLookup);
-  document.getElementById('externalId').innerHTML =
-    (extIds.length?extIds:sfFields).map(f=>`<option value="${f.name}"${f.externalId?' selected':''}>${f.name}${f.externalId?' (external id)':''}</option>`).join('');
-  buildMap();
-}
-
-function buildMap(){
-  const t = curTable(); const obj = document.getElementById('sfObject').value;
-  const ready = t && sfFields.length && obj;
-  document.getElementById('mapHint').classList.toggle('hidden', ready);
-  document.getElementById('mapRows').classList.toggle('hidden', !ready);
-  document.getElementById('mapSearchBar').classList.toggle('hidden', !ready);
-  document.getElementById('saveBtn').disabled = !ready;
-  document.getElementById('clearBtn').disabled = !ready;
-  if(!ready) return;
-  document.getElementById('mapTitle').textContent = obj;
-  document.getElementById('mapSearch').value = '';
-  const targets = sfFields.filter(f=>f.createable);
-  document.getElementById('mapCount').textContent = targets.length + ' fields';
-  const opts = f => '<option value="">— not mapped —</option>' + t.fields.map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+function buildMapRows(){
+  const t = curTable(); const m = curM();
+  const fields = sfFieldCache[m.targetObject] || [];
+  const targets = fields.filter(f=>f.createable);
+  document.getElementById('mapTitle').textContent = m.targetObject || 'Field mapping';
+  document.getElementById('mapCount').textContent = targets.length? targets.length+' fields':'';
+  if(!t || !m.targetObject || !targets.length){ document.getElementById('mapRows').innerHTML = '<div class="maphint"><div class="big">🔗</div>Choose a Salesforce object to map fields.</div>'; return; }
+  const savedByTarget = Object.fromEntries((m.fields||[]).map(f=>[f.target,f]));
+  const srcOpts = t.fields.map(s=>`<option value="src:${s.name}">${s.name}</option>`).join('');
   document.getElementById('mapRows').innerHTML = targets.map(tf=>{
+    const saved = savedByTarget[tf.name];
     const guess = t.fields.find(s=>s.name.toLowerCase()===tf.name.toLowerCase().replace(/__c$/,''));
-    let sel = opts(tf);
-    if(guess) sel = sel.replace(`value="${guess.name}"`, `value="${guess.name}" selected`);
+    let selVal = '', constVal='';
+    if(saved){ if('constant' in saved){ selVal='__const__'; constVal=saved.constant; } else selVal='src:'+saved.source; }
+    else if(guess) selVal='src:'+guess.name;
+    const opts = `<option value="">— not mapped —</option><option value="__const__">＝ constant value…</option>${srcOpts}`
+      .replace(`value="${selVal}"`, `value="${selVal}" selected`);
     return `<div class="maprow${tf.required?' req':''}" data-name="${(tf.label+' '+tf.name).toLowerCase()}">
-      <select data-target="${tf.name}">${sel}</select>
+      <div class="src">
+        <select onchange="onSrcChange(this)" data-target="${tf.name}">${opts}</select>
+        <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${constVal.replace(/"/g,'&quot;')}">
+      </div>
       <div class="arrow">→</div>
-      <div class="tgt"><div class="lbl">${tf.label}${tf.required?' <span class="badge req">required</span>':''}${tf.externalId?' <span class="badge ext">ext id</span>':''}</div><div class="api">${tf.name} · ${tf.type}</div></div>
+      <div class="tgt"><div class="lbl">${tf.label}${tf.required?' <span class="badge req">required</span>':''}${tf.externalId?' <span class="badge ext">ext id</span>':''}${tf.reference?' <span class="badge rel">lookup</span>':''}</div><div class="api">${tf.name} · ${tf.type}</div></div>
     </div>`;
   }).join('');
 }
+function onSrcChange(sel){ const inp = sel.parentElement.querySelector('.constinput'); inp.classList.toggle('hidden', sel.value!=='__const__'); }
 
-async function saveMapping(){
-  const t = curTable();
-  const rows = [...document.querySelectorAll('#mapRows select')].filter(s=>s.value).map(s=>({source:s.value,target:s.dataset.target}));
+function renderRelationships(){
+  const m = curM(); const t = curTable();
+  const fields = sfFieldCache[m.targetObject] || [];
+  const refFields = fields.filter(f=>f.reference && f.createable);
+  const others = state.mappings.filter(x=>x.id!==m.id && x.targetObject);
+  document.getElementById('relSection').style.display = (refFields.length && others.length) ? '' : 'none';
+  const lookupOpts = r => refFields.map(f=>`<option value="${f.name}"${r&&r.targetField===f.name?' selected':''}>${f.label} (${f.name})</option>`).join('');
+  const parentOpts = r => others.map(o=>`<option value="${o.id}"${r&&r.parentMapping===o.id?' selected':''}>${o.targetObject}</option>`).join('');
+  const keyOpts = r => (t?t.fields:[]).map(s=>`<option value="${s.name}"${r&&r.sourceKey===s.name?' selected':''}>${s.name}</option>`).join('');
+  const matchOpts = r => { const p=state.mappings.find(x=>x.id===(r&&r.parentMapping)); if(!p) return '<option value="">…</option>'; const targets=[p.externalIdField,...(p.fields||[]).map(f=>f.target)].filter((v,i,a)=>v&&a.indexOf(v)===i); const sel=(r&&r.parentMatchField)||p.externalIdField; return targets.map(f=>`<option value="${f}"${sel===f?' selected':''}>${f}</option>`).join(''); };
+  document.getElementById('relRows').innerHTML = (m.relationships||[]).map((r,i)=>
+    `<div class="relrow"><select data-k="targetField"><option value="">lookup field…</option>${lookupOpts(r)}</select>
+      <span>← parent</span><select data-k="parentMapping" onchange="onRelParentChange()"><option value="">object…</option>${parentOpts(r)}</select>
+      <span>· our</span><select data-k="sourceKey"><option value="">field…</option>${keyOpts(r)}</select>
+      <span>=&nbsp;their</span><select data-k="parentMatchField">${matchOpts(r)}</select>
+      <span class="rx" onclick="removeRel(${i})">✕</span></div>`).join('');
+}
+function onRelParentChange(){ captureCurrent(); renderRelationships(); }
+function addRel(){ captureCurrent(); curM().relationships.push({targetField:'',parentMapping:'',sourceKey:''}); renderRelationships(); }
+function removeRel(i){ captureCurrent(); curM().relationships.splice(i,1); renderRelationships(); }
+
+function captureCurrent(){
+  const m = curM(); if(!m) return;
+  m.sourceObject = document.getElementById('tallyTable').value;
+  m.targetObject = document.getElementById('sfObject').value;
+  m.externalIdField = document.getElementById('externalId').value;
   const ff = document.getElementById('filterField').value;
-  const om = { sourceObject:t.name, targetObject:document.getElementById('sfObject').value,
-    externalIdField:document.getElementById('externalId').value, fields:rows };
-  if(ff) om.filter = { field:ff, operator:document.getElementById('filterOp').value, value:document.getElementById('filterValue').value };
-  const mapping = { objectMappings:[om] };
-  await fetch('/api/mapping/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mapping,null,2)});
-  const m = document.getElementById('saveMsg'); m.textContent = '✓ Saved '+rows.length+' mappings';
-  setTimeout(()=>m.textContent='', 3000);
+  m.filter = ff ? { field:ff, operator:document.getElementById('filterOp').value, value:document.getElementById('filterValue').value } : null;
+  m.fields = [...document.querySelectorAll('#mapRows .maprow')].map(row=>{
+    const sel = row.querySelector('select'); const target = sel.dataset.target;
+    if(sel.value==='__const__') return { target, constant: row.querySelector('.constinput').value };
+    if(sel.value.startsWith('src:')) return { source: sel.value.slice(4), target };
+    return null;
+  }).filter(Boolean);
+  m.relationships = [...document.querySelectorAll('#relRows .relrow')].map(row=>{
+    const g = k => { const el = row.querySelector(`[data-k="${k}"]`); return el ? el.value : ''; };
+    const r = { targetField:g('targetField'), parentMapping:g('parentMapping'), sourceKey:g('sourceKey'), parentMatchField:g('parentMatchField') };
+    return (r.targetField && r.parentMapping && r.sourceKey) ? r : null;
+  }).filter(Boolean);
+}
+
+function filterSrc(){ const q=document.getElementById('srcSearch').value.toLowerCase(); document.querySelectorAll('#tallyFields .srcfield').forEach(el=>{ el.style.display=el.textContent.toLowerCase().includes(q)?'':'none'; }); }
+function filterMap(){ const q=document.getElementById('mapSearch').value.toLowerCase(); document.querySelectorAll('#mapRows .maprow').forEach(el=>{ el.style.display=(el.dataset.name||'').includes(q)?'':'none'; }); }
+
+async function saveAll(){
+  captureCurrent();
+  const name = document.getElementById('docName').value.trim();
+  const m = document.getElementById('saveMsg');
+  if(!name){ m.textContent='⚠ Name the mapping first'; m.style.color='#b42318'; setTimeout(()=>{m.textContent='';m.style.color='';},2600); document.getElementById('docName').focus(); return false; }
+  state.name = name;
+  await fetch('/api/mappings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, objectMappings:state.mappings})});
+  await loadDocList(); document.getElementById('loadSelect').value='';
+  m.textContent='✓ Saved "'+name+'"'; m.style.color=''; setTimeout(()=>m.textContent='',2600);
+  return true;
+}
+async function runSync(){
+  if(!(await saveAll())) return;
+  const btn=document.querySelector('.mapbar .sync'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Syncing…';
+  document.getElementById('runTitle').textContent='Syncing to Salesforce…';
+  document.getElementById('runResults').innerHTML='<p style="color:#64748b">Extracting from Tally, mapping, and upserting in dependency order… a few seconds.</p>';
+  document.getElementById('runModal').classList.remove('hidden');
+  let data; try{ data=await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:state.name})})).json(); }catch(e){ data={error:String(e)}; }
+  btn.disabled=false; btn.innerHTML='▶ Sync all'; showResults(data);
+}
+function showResults(data){
+  document.getElementById('runTitle').textContent='Sync results';
+  const box=document.getElementById('runResults');
+  if(data.error){ box.innerHTML=`<p class="err">⚠ ${data.error}</p>`; return; }
+  const rows=data.results||[]; if(!rows.length){ box.innerHTML='<p>Nothing to sync — add and save a mapping first.</p>'; return; }
+  box.innerHTML = rows.map(r=>`<div class="resrow"><div class="head">${r.sourceObject} → ${r.targetObject}</div>
+    <div><span class="ok">✓ ${r.success} upserted</span>${r.failed?` · <span class="err">${r.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${r.total})</span></div>
+    ${(r.errors&&r.errors.length)?`<ul>${r.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}</div>`).join('');
 }
 
 init();
