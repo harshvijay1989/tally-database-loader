@@ -71,6 +71,25 @@ function extractTallyToJson() {
         child.on('error', reject);
     });
 }
+function applyTransform(v, t) {
+    if (v == null || !t || t === 'none')
+        return v;
+    switch (t) {
+        case 'abs': {
+            const n = parseFloat(v);
+            return isNaN(n) ? v : Math.abs(n);
+        }
+        case 'number': {
+            const n = parseFloat(v);
+            return isNaN(n) ? v : n;
+        }
+        case 'trim': return String(v).trim();
+        case 'upper': return String(v).toUpperCase();
+        case 'lower': return String(v).toLowerCase();
+        case 'date': return String(v).slice(0, 10); // ISO datetime -> YYYY-MM-DD
+        default: return v;
+    }
+}
 function matchFilter(value, op, target) {
     const na = parseFloat(value), nb = parseFloat(target);
     const numeric = !isNaN(na) && !isNaN(nb);
@@ -180,8 +199,12 @@ async function runMapping(name) {
         });
         const mapped = rows.map(r => {
             const o = {};
-            for (const f of (om.fields || []))
-                o[f.target] = ('constant' in f) ? f.constant : r[f.source];
+            for (const f of (om.fields || [])) {
+                let val = ('constant' in f) ? f.constant : r[f.source];
+                if (f.transform)
+                    val = applyTransform(val, f.transform);
+                o[f.target] = val;
+            }
             let orphan = false;
             for (const { rel, map } of relLookups) {
                 const key = r[rel.sourceKey];

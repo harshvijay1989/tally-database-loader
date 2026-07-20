@@ -86,6 +86,7 @@
   .maprow{display:grid;grid-template-columns:1fr 30px 1fr;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin-bottom:9px;box-shadow:var(--shadow)}
   .maprow.req{border-left:3px solid var(--sf)}
   .maprow .src{display:flex;flex-direction:column;gap:6px} .maprow .src select,.maprow .src input{width:100%}
+  .maprow .src .xform{font-size:12px;color:var(--sf);background:#f8fbff;border-color:#cfe3f7;padding:6px 8px}
   .maprow .arrow{text-align:center;color:var(--faint)}
   .maprow .tgt .lbl{font-weight:600;font-size:13px} .maprow .tgt .api{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)}
   .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px}
@@ -298,11 +299,14 @@ function buildMapRows(){
     let selVal = '', constVal='';
     if(saved){ if('constant' in saved){ selVal='__const__'; constVal=saved.constant; } else selVal='src:'+saved.source; }
     else if(guess) selVal='src:'+guess.name;
+    const xf = (saved && saved.transform) ? saved.transform : 'none';
+    const isSrc = selVal.startsWith('src:');
     const opts = `<option value="">— not mapped —</option><option value="__const__">＝ constant value…</option>${srcOpts}`
       .replace(`value="${selVal}"`, `value="${selVal}" selected`);
     return `<div class="maprow${tf.required?' req':''}" data-name="${(tf.label+' '+tf.name).toLowerCase()}">
       <div class="src">
-        <select onchange="onSrcChange(this)" data-target="${tf.name}">${opts}</select>
+        <select class="srcsel" onchange="onSrcChange(this)" data-target="${tf.name}">${opts}</select>
+        <select class="xform${isSrc?'':' hidden'}">${xformOptions(xf)}</select>
         <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${constVal.replace(/"/g,'&quot;')}">
       </div>
       <div class="arrow">→</div>
@@ -310,7 +314,15 @@ function buildMapRows(){
     </div>`;
   }).join('');
 }
-function onSrcChange(sel){ const inp = sel.parentElement.querySelector('.constinput'); inp.classList.toggle('hidden', sel.value!=='__const__'); }
+function xformOptions(sel){
+  const o=[['none','ƒ no transform'],['abs','ƒ absolute value'],['trim','ƒ trim spaces'],['upper','ƒ UPPERCASE'],['lower','ƒ lowercase'],['date','ƒ date (YYYY-MM-DD)'],['number','ƒ number']];
+  return o.map(([v,l])=>`<option value="${v}"${sel===v?' selected':''}>${l}</option>`).join('');
+}
+function onSrcChange(sel){
+  const cell = sel.parentElement;
+  cell.querySelector('.constinput').classList.toggle('hidden', sel.value!=='__const__');
+  cell.querySelector('.xform').classList.toggle('hidden', !sel.value.startsWith('src:'));
+}
 
 function renderRelationships(){
   const m = curM(); const t = curTable();
@@ -341,9 +353,9 @@ function captureCurrent(){
   const ff = document.getElementById('filterField').value;
   m.filter = ff ? { field:ff, operator:document.getElementById('filterOp').value, value:document.getElementById('filterValue').value } : null;
   m.fields = [...document.querySelectorAll('#mapRows .maprow')].map(row=>{
-    const sel = row.querySelector('select'); const target = sel.dataset.target;
+    const sel = row.querySelector('.srcsel'); const target = sel.dataset.target;
     if(sel.value==='__const__') return { target, constant: row.querySelector('.constinput').value };
-    if(sel.value.startsWith('src:')) return { source: sel.value.slice(4), target };
+    if(sel.value.startsWith('src:')){ const x = row.querySelector('.xform').value; const f = { source: sel.value.slice(4), target }; if(x && x!=='none') f.transform = x; return f; }
     return null;
   }).filter(Boolean);
   m.relationships = [...document.querySelectorAll('#relRows .relrow')].map(row=>{
