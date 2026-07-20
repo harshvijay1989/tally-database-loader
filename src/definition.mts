@@ -154,6 +154,22 @@ export interface companyInfo {
 /** SQL dialects that share the SqlSink implementation. */
 export type sqlDialect = 'mssql' | 'mysql' | 'postgres';
 
+/** Salesforce connection details, loaded from git-ignored salesforce-credentials.json. */
+export interface salesforceCredentials {
+    instanceUrl: string;   // My Domain URL, e.g. https://xxx.my.salesforce.com
+    clientId: string;      // Connected App consumer key
+    clientSecret: string;  // Connected App consumer secret
+    apiVersion: string;    // e.g. v62.0
+}
+
+/** Result of an upsert batch against a target object. */
+export interface upsertResult {
+    total: number;
+    success: number;
+    failed: number;
+    errors: string[];      // human-readable per-record failures (capped)
+}
+
 /**
  * What a sink can do. Replaces the technology-string tests that used to be
  * scattered through tally.mts. Callers guard on a capability, never on a

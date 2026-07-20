@@ -6,6 +6,7 @@ import { PostgresSink } from './postgresSink.mjs';
 import { CsvSink } from './csvSink.mjs';
 import { JsonSink } from './jsonSink.mjs';
 import { BigQuerySink } from './bigquerySink.mjs';
+import { SalesforceSink } from './salesforceSink.mjs';
 // Sink factory + module singleton. Replaces the former `database` singleton.
 // index.mts builds the config (with command-line overrides applied) and calls
 // initSink(); tally.mts reads the active sink via getSink().
@@ -65,6 +66,7 @@ export function createSink(config) {
         case 'bigquery': return new BigQuerySink(config);
         case 'csv': return new CsvSink(config);
         case 'json': return new JsonSink(config);
+        case 'salesforce': return new SalesforceSink(config);
         default: throw new Error(`Unsupported sink technology: ${config.technology}`);
     }
 }
