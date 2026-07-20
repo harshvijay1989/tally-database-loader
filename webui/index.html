@@ -98,7 +98,11 @@
   .modal-card h3{margin:0 0 16px;font-size:18px}
   .resrow{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:11px}
   .resrow .head{font-weight:600;margin-bottom:5px} .resrow .ok{color:var(--ok);font-weight:600} .resrow .err{color:#b42318}
+  .resrow .st{font-size:13px} .resrow .st.pending{color:#94a3b8}
   .resrow ul{margin:7px 0 0;padding-left:18px;font-size:12.5px;color:#b42318}
+  .pending{color:#64748b}
+  .spin.dark{border:2px solid #c7d2fe;border-top-color:#4f46e5}
+  .donebanner{margin-top:14px;background:var(--okbg);color:#166534;border:1px solid #86efac;border-radius:10px;padding:12px 14px;font-weight:600;text-align:center}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .hidden{display:none!important}
@@ -382,20 +386,35 @@ async function saveAll(){
 async function runSync(){
   if(!(await saveAll())) return;
   const btn=document.querySelector('.mapbar .sync'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Syncing…';
-  document.getElementById('runTitle').textContent='Syncing to Salesforce…';
-  document.getElementById('runResults').innerHTML='<p style="color:#64748b">Extracting from Tally, mapping, and upserting in dependency order… a few seconds.</p>';
+  const box=document.getElementById('runResults'); const title=document.getElementById('runTitle');
+  title.textContent='Syncing to Salesforce…';
+  box.innerHTML='<p class="pending"><span class="spin dark"></span> Starting…</p>';
   document.getElementById('runModal').classList.remove('hidden');
-  let data; try{ data=await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:state.name})})).json(); }catch(e){ data={error:String(e)}; }
-  btn.disabled=false; btn.innerHTML='▶ Sync all'; showResults(data);
-}
-function showResults(data){
-  document.getElementById('runTitle').textContent='Sync results';
-  const box=document.getElementById('runResults');
-  if(data.error){ box.innerHTML=`<p class="err">⚠ ${data.error}</p>`; return; }
-  const rows=data.results||[]; if(!rows.length){ box.innerHTML='<p>Nothing to sync — add and save a mapping first.</p>'; return; }
-  box.innerHTML = rows.map(r=>`<div class="resrow"><div class="head">${r.sourceObject} → ${r.targetObject}</div>
-    <div><span class="ok">✓ ${r.success} upserted</span>${r.failed?` · <span class="err">${r.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${r.total})</span></div>
-    ${(r.errors&&r.errors.length)?`<ul>${r.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}</div>`).join('');
+  const rows={}; let up=0, fail=0, ok=false;
+  try{
+    const resp=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:state.name})});
+    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); const parts=buf.split('\n'); buf=parts.pop();
+      for(const line of parts){ if(!line.trim()) continue; const ev=JSON.parse(line);
+        if(ev.type==='extract'){ box.innerHTML='<p class="pending"><span class="spin dark"></span> Extracting data from Tally…</p>'; }
+        else if(ev.type==='start'){
+          box.innerHTML = ev.objects.length ? ev.objects.map(o=>`<div class="resrow" data-obj="${o.targetObject}"><div class="head">${o.sourceObject} → ${o.targetObject}</div><div class="st pending">waiting…</div></div>`).join('')
+            : '<p>Nothing to sync — this mapping has no complete objects.</p>';
+          ev.objects.forEach(o=> rows[o.targetObject]=box.querySelector(`[data-obj="${o.targetObject}"] .st`));
+        }
+        else if(ev.type==='progress'){ if(rows[ev.targetObject]) rows[ev.targetObject].innerHTML='<span class="spin dark"></span> syncing…'; }
+        else if(ev.type==='object'){ up+=ev.success; fail+=ev.failed; const st=rows[ev.targetObject];
+          if(st) st.innerHTML=`<span class="ok">✓ ${ev.success} upserted</span>${ev.failed?` · <span class="err">${ev.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${ev.total})</span>${(ev.errors&&ev.errors.length)?`<ul>${ev.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}`; }
+        else if(ev.type==='done'){ ok=true; }
+        else if(ev.type==='error'){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${ev.message}</p>`); }
+      }
+    }
+  }catch(e){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${e}</p>`); }
+  btn.disabled=false; btn.innerHTML='▶ Sync all';
+  if(ok){ title.innerHTML='<span style="color:var(--ok)">✓ Sync complete</span>'; box.insertAdjacentHTML('beforeend', `<div class="donebanner">✓ Sync complete — ${up} record(s) upserted${fail?` · ${fail} failed`:''}</div>`); }
+  else { title.textContent='Sync finished with errors'; }
 }
 
 init();

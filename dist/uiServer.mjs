@@ -157,26 +157,26 @@ function orderMappings(oms) {
             out.push(om); // cycle safety
     return out;
 }
-async function runMapping(name) {
+async function runMapping(name, emit) {
     const auth = await getAuth();
     if (!auth)
         throw new Error('not connected to Salesforce');
-    const file = `${MAP_DIR}/${mapSlug(name)}.json`;
-    if (!fs.existsSync(file))
+    const mapFile = `${MAP_DIR}/${mapSlug(name)}.json`;
+    if (!fs.existsSync(mapFile))
         throw new Error('no mapping saved yet — save one first');
-    const mapping = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const mapping = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
+    emit({ type: 'extract' });
     await extractTallyToJson(); // pull fresh Tally data as ./csv/<table>.json
-    const oms = orderMappings(mapping.objectMappings || []);
+    const oms = orderMappings(mapping.objectMappings || []).filter((o) => o.targetObject && o.externalIdField);
     const byId = Object.fromEntries(oms.map(m => [m.id, m]));
     // per parent mapping: the upserted rows + ext-id->SF-id, so children can match on ANY parent field
     const parentData = {};
-    const out = [];
+    emit({ type: 'start', objects: oms.map((o) => ({ sourceObject: o.sourceObject, targetObject: o.targetObject })) });
     for (const om of oms) {
+        emit({ type: 'progress', targetObject: om.targetObject });
         const file = `./csv/${om.sourceObject}.json`;
-        if (!om.targetObject || !om.externalIdField)
-            continue;
         if (!fs.existsSync(file)) {
-            out.push({ sourceObject: om.sourceObject, targetObject: om.targetObject, total: 0, success: 0, failed: 0, errors: [`source ${om.sourceObject} produced no data`] });
+            emit({ type: 'object', sourceObject: om.sourceObject, targetObject: om.targetObject, total: 0, success: 0, failed: 0, errors: [`source ${om.sourceObject} produced no data`] });
             continue;
         }
         let rows = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
@@ -221,9 +221,9 @@ async function runMapping(name) {
         if (skipped)
             res.errors.unshift(`${skipped} row(s) skipped (no matching parent)`);
         parentData[om.id] = { rows: mapped, keyToId: res.keyToId, extId: om.externalIdField };
-        out.push({ sourceObject: om.sourceObject, targetObject: om.targetObject, total: res.total, success: res.success, failed: res.failed, errors: res.errors });
+        emit({ type: 'object', sourceObject: om.sourceObject, targetObject: om.targetObject, total: res.total, success: res.success, failed: res.failed, errors: res.errors });
     }
-    return out;
+    emit({ type: 'done' });
 }
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
@@ -318,12 +318,20 @@ const server = http.createServer(async (req, res) => {
             return json(200, { deleted: true });
         }
         if (url.pathname === '/api/run' && req.method === 'POST') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' });
+            const emit = (ev) => { try {
+                res.write(JSON.stringify(ev) + '\n');
+            }
+            catch { /* client gone */ } };
             try {
-                return json(200, { results: await runMapping(mapSlug(JSON.parse(await readBody(req) || '{}').name || '')) });
+                await runMapping(mapSlug(body.name || ''), emit);
             }
             catch (e) {
-                return json(200, { error: String(e?.message || e) });
+                emit({ type: 'error', message: String(e?.message || e) });
             }
+            res.end();
+            return;
         }
         send(404, 'text/plain', 'not found');
     }
