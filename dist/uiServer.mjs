@@ -339,6 +339,17 @@ const server = http.createServer(async (req, res) => {
         send(500, 'text/plain', String(err?.message || err));
     }
 });
+server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+        console.log(`The connector is already running — opening http://localhost:${PORT} in your browser.`);
+        child_process.exec(`start http://localhost:${PORT}`);
+        setTimeout(() => process.exit(0), 500);
+    }
+    else {
+        console.error(err);
+        process.exit(1);
+    }
+});
 server.listen(PORT, () => {
     console.log(`Connector UI running at http://localhost:${PORT}`);
     child_process.exec(`start http://localhost:${PORT}`);
