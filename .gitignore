@@ -1,4 +1,5 @@
 node_modules/
+installer/build/
 private/
 csv/
 ssl/
@@ -11,6 +12,7 @@ error-log.txt
 *.duckdb
 bigquery-credentials.json
 salesforce-credentials.json
+connections.json
 adls-config.json
 mapping.json
 mappings/

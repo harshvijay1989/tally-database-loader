@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Tally → Salesforce Connector</title>
+<title>Tally Connector</title>
 <style>
   :root{
     --bg:#0f172a; --canvas:#f1f5f9; --card:#fff; --line:#e2e8f0; --line2:#eef2f7;
     --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
-    --accent:#4f46e5; --accent-d:#4338ca; --tally:#d97706; --sf:#0176d3;
+    --accent:#4f46e5; --accent-d:#4338ca; --tally:#d97706; --sf:#0176d3; --gdrive:#0f9d58;
     --ok:#16a34a; --okbg:#dcfce7; --shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.06); --radius:12px;
   }
   *{box-sizing:border-box}
@@ -19,8 +19,8 @@
   .brand{display:flex;align-items:center;gap:12px;font-weight:650;font-size:15px}
   .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--tally),var(--sf));display:grid;place-items:center;color:#fff;font-size:15px}
   .brand small{color:var(--faint);font-weight:500}
-  .appbar-right{display:flex;align-items:center;gap:12px}
-  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);background:#f8fafc;border:1px solid var(--line);padding:6px 12px;border-radius:20px}
+  .appbar-right{display:flex;align-items:center;gap:10px}
+  .status{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);background:#f8fafc;border:1px solid var(--line);padding:6px 11px;border-radius:20px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
   .status.on{color:var(--ink2)} .status.on .dot{background:var(--ok);box-shadow:0 0 0 3px var(--okbg)}
   button{font:inherit;font-weight:550;border:1px solid transparent;border-radius:9px;padding:9px 15px;cursor:pointer;background:var(--accent);color:#fff;transition:.15s}
@@ -32,18 +32,12 @@
   select,input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
   select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #e0e7ff}
 
-  .hero{flex:1;display:grid;place-items:center;background:radial-gradient(1200px 600px at 50% -10%,#e0e7ff 0,transparent 60%),var(--canvas)}
-  .hero-card{background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:48px 46px;max-width:520px;text-align:center}
-  .hero-card .logo{width:56px;height:56px;border-radius:16px;font-size:26px;margin:0 auto 20px}
-  .hero-card h1{font-size:24px;margin:0 0 10px} .hero-card p{color:var(--muted);margin:0 0 26px;font-size:15px}
-
   .workspace{flex:1;display:flex;flex-direction:column;min-height:0}
   .docbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 18px;background:#f8fafc;border-bottom:1px solid var(--line)}
   .docbar .dlabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-  .docbar #docName{min-width:300px;font-weight:600}
-  .docbar select{min-width:170px}
+  .docbar #docName{min-width:240px;font-weight:600}
+  .docbar select{min-width:150px}
   .docbar .spacer{flex:1}
-  /* mapping tabs bar */
   .mapbar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto}
   .maptab{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;cursor:pointer;white-space:nowrap;font-size:13px;font-weight:550;color:var(--ink2)}
   .maptab.active{border-color:var(--accent);background:#eef2ff;color:var(--accent)}
@@ -55,7 +49,7 @@
   .toolbar{flex:0 0 auto;background:var(--card);border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
   .fieldset{display:flex;flex-direction:column;gap:5px}
   .fieldset label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint)}
-  .toolbar select{min-width:200px}
+  .toolbar select,.toolbar input{min-width:200px}
   .flow-arrow{align-self:center;color:var(--faint);font-size:18px;padding-bottom:8px}
   .toolbar .spacer{flex:1}
 
@@ -68,7 +62,7 @@
   .pane.source{border-right:1px solid var(--line);background:#fff}
   .pane-head{flex:0 0 auto;padding:13px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:10px}
   .chip{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:6px}
-  .chip.tally{color:var(--tally);background:#fef3c7} .chip.sf{color:var(--sf);background:#e0effd}
+  .chip.tally{color:var(--tally);background:#fef3c7} .chip.sf{color:var(--sf);background:#e0effd} .chip.gd{color:var(--gdrive);background:#e2f5ea}
   .pane-head h3{margin:0;font-size:14px} .pane-head .count{margin-left:auto;color:var(--faint);font-size:12px}
   .pane-search{flex:0 0 auto;padding:10px 20px;border-bottom:1px solid var(--line2)}
   .search{width:100%;padding:8px 12px 8px 32px;border:1px solid var(--line);border-radius:8px;background:#fff
@@ -77,7 +71,6 @@
   .srcfield{display:flex;gap:10px;padding:8px 10px;border-radius:8px} .srcfield:hover{background:#f8fafc}
   .srcfield .n{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--ink2)} .srcfield .meta{margin-left:auto;color:var(--faint);font-size:11.5px}
 
-  /* relationships */
   .rel-section{background:#eff6ff;border:1px solid #bfdbfe;border-radius:11px;padding:12px 14px;margin-bottom:16px}
   .rel-head{display:flex;align-items:center;gap:10px;font-weight:600;font-size:13px;color:var(--sf);margin-bottom:8px}
   .relrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--ink2);margin-bottom:7px}
@@ -89,17 +82,28 @@
   .maprow .src .xform{font-size:12px;color:var(--sf);background:#f8fbff;border-color:#cfe3f7;padding:6px 8px}
   .maprow .arrow{text-align:center;color:var(--faint)}
   .maprow .tgt .lbl{font-weight:600;font-size:13px} .maprow .tgt .api{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted)}
+  .maprow .tgt{display:flex;align-items:center;gap:8px} .maprow .tgt .colname{flex:1}
+  .maprow .tgt .rx{color:var(--faint);cursor:pointer;font-weight:700} .maprow .tgt .rx:hover{color:#b42318}
   .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px}
   .badge.ext{color:var(--accent);background:#eef2ff} .badge.req{color:#b42318;background:#fee4e2} .badge.rel{color:var(--sf);background:#e0effd}
   .maphint{color:var(--muted);text-align:center;margin-top:50px} .maphint .big{font-size:34px;opacity:.4;margin-bottom:10px}
 
   .modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:grid;place-items:center;z-index:50}
-  .modal-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:580px;max-width:92vw;max-height:82vh;overflow:auto;padding:26px}
-  .modal-card h3{margin:0 0 16px;font-size:18px}
+  .modal-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:600px;max-width:94vw;max-height:88vh;overflow:auto;padding:26px}
+  .modal-card h3{margin:0 0 4px;font-size:19px}
+  .modal-card .sub{color:var(--muted);margin:0 0 18px;font-size:13px}
+  .connsec{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .connsec h4{margin:0 0 3px;font-size:15px;display:flex;align-items:center;gap:8px}
+  .connsec .hint{color:var(--muted);font-size:12.5px;margin:0 0 14px}
+  .frow{display:flex;flex-direction:column;gap:5px;margin-bottom:11px}
+  .frow label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--faint)}
+  .frow input{width:100%}
+  .connfoot{display:flex;align-items:center;gap:12px;margin-top:6px}
+  .connstat{font-size:13px;font-weight:600} .connstat.ok{color:var(--ok)} .connstat.bad{color:#b42318}
   .resrow{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:11px}
   .resrow .head{font-weight:600;margin-bottom:5px} .resrow .ok{color:var(--ok);font-weight:600} .resrow .err{color:#b42318}
   .resrow .st{font-size:13px} .resrow .st.pending{color:#94a3b8}
-  .resrow ul{margin:7px 0 0;padding-left:18px;font-size:12.5px;color:#b42318}
+  .resrow ul{margin:7px 0 0;padding-left:18px;font-size:12.5px;color:#334155;word-break:break-all}
   .pending{color:#64748b}
   .spin.dark{border:2px solid #c7d2fe;border-top-color:#4f46e5}
   .donebanner{margin-top:14px;background:var(--okbg);color:#166534;border:1px solid #86efac;border-radius:10px;padding:12px 14px;font-weight:600;text-align:center}
@@ -111,26 +115,23 @@
 </head>
 <body>
 <div class="appbar">
-  <div class="brand"><span class="logo">⚡</span> Tally <small>→</small> Salesforce Connector</div>
+  <div class="brand"><span class="logo">⚡</span> Tally <small>→</small> Connector</div>
   <div class="appbar-right">
-    <span id="status" class="status"><span class="dot"></span><span id="statusText">Not connected</span></span>
-    <button id="connectBtn" onclick="connectSf()">Connect to Salesforce</button>
-    <button id="disconnectBtn" class="ghost hidden" onclick="disconnect()">Disconnect</button>
+    <span id="sfStatus" class="status"><span class="dot"></span><span id="sfStatusText">Salesforce</span></span>
+    <span id="gStatus" class="status"><span class="dot"></span><span id="gStatusText">Google Drive</span></span>
+    <button class="ghost" onclick="openConnections()">⚙ Connections</button>
   </div>
 </div>
 
-<div id="hero" class="hero">
-  <div class="hero-card">
-    <div class="logo">⚡</div><h1>Connect your Salesforce org</h1>
-    <p>Log in through Salesforce in your browser — no tokens, keys, or apps to set up. You just approve access.</p>
-    <button class="big" onclick="connectSf()">Connect to Salesforce</button>
-  </div>
-</div>
-
-<div id="app" class="workspace hidden">
+<div id="app" class="workspace">
   <div class="docbar">
     <span class="dlabel">Mapping</span>
-    <input id="docName" placeholder="Name this mapping — e.g. Sales → Salesforce">
+    <input id="docName" placeholder="Name this mapping — e.g. Sales export">
+    <span class="dlabel">Destination</span>
+    <select id="destSelect" onchange="onDestChange()">
+      <option value="salesforce">Salesforce</option>
+      <option value="googledrive">Google Drive (CSV)</option>
+    </select>
     <div class="spacer"></div>
     <span class="dlabel">Open saved</span>
     <select id="loadSelect" onchange="onLoadSelect()"><option value="">— saved mappings —</option></select>
@@ -139,24 +140,25 @@
   </div>
   <div class="mapbar">
     <div id="mapTabs" style="display:flex;gap:8px"></div>
-    <button class="ghost" onclick="addMapping()">＋ Add object mapping</button>
+    <button class="ghost" onclick="addMapping()">＋ Add <span id="addLabel">object mapping</span></button>
     <div class="spacer"></div>
     <span id="saveMsg" class="savemsg"></span>
     <button class="ghost" onclick="saveAll()">Save</button>
-    <button class="sync" onclick="runSync()">▶ Sync all</button>
+    <button class="sync" onclick="runSync()"><span id="syncLabel">▶ Sync all</span></button>
   </div>
 
-  <div id="noMapping" class="hero" style="flex:1">
+  <div id="noMapping" style="flex:1;display:grid;place-items:center">
     <div style="text-align:center;color:var(--muted)"><div style="font-size:38px;opacity:.4">🗺️</div>
-      <p>No object mappings yet.<br>Click <b>＋ Add object mapping</b> to map a Tally table to a Salesforce object.</p></div>
+      <p id="noMapText">No mappings yet.<br>Click <b>＋ Add</b> to map a Tally table to your destination.</p></div>
   </div>
 
   <div id="editor" class="hidden">
     <div class="toolbar">
       <div class="fieldset"><label>Source · Tally table</label><select id="tallyTable" onchange="onSourceChange()"></select></div>
       <div class="flow-arrow">→</div>
-      <div class="fieldset"><label>Target · Salesforce object</label><select id="sfObject" onchange="onTargetChange()"></select></div>
-      <div class="fieldset"><label>External ID (upsert key)</label><select id="externalId"></select></div>
+      <div class="fieldset sfonly"><label>Target · Salesforce object</label><select id="sfObject" onchange="onTargetChange()"></select></div>
+      <div class="fieldset sfonly"><label>External ID (upsert key)</label><select id="externalId"></select></div>
+      <div class="fieldset driveonly hidden"><label>Output CSV file name</label><input id="driveFileName" placeholder="e.g. Customers" oninput="onDriveNameChange()"></div>
     </div>
     <div class="filterbar">
       <span class="flabel">Filter</span><span class="muted">sync only rows where</span>
@@ -171,10 +173,15 @@
         <div class="pane-body" id="tallyFields"></div>
       </div>
       <div class="pane map">
-        <div class="pane-head"><span class="chip sf">Salesforce</span><h3 id="mapTitle">Field mapping</h3><span class="count" id="mapCount"></span></div>
-        <div class="pane-search"><input id="mapSearch" class="search" placeholder="Search Salesforce fields…" oninput="filterMap()"></div>
+        <div class="pane-head">
+          <span id="tgtChip" class="chip sf">Salesforce</span><h3 id="mapTitle">Field mapping</h3>
+          <span class="count" id="mapCount"></span>
+          <button id="addColBtn" class="mini ghost hidden" onclick="addColumn()" style="margin-left:10px">＋ column</button>
+          <button id="addAllBtn" class="mini ghost hidden" onclick="addAllColumns()">＋ all fields</button>
+        </div>
+        <div class="pane-search"><input id="mapSearch" class="search" placeholder="Search fields…" oninput="filterMap()"></div>
         <div class="pane-body">
-          <div class="rel-section" id="relSection">
+          <div class="rel-section sfonly" id="relSection">
             <div class="rel-head">🔗 Relationships (link to a parent object)<button class="mini ghost" onclick="addRel()">＋ link</button></div>
             <div id="relRows"></div>
           </div>
@@ -182,6 +189,42 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Connections modal -->
+<div id="connModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal-card">
+    <h3>Connections</h3>
+    <p class="sub">Configure where your Tally data goes. Stored locally on this machine only.</p>
+
+    <div class="connsec">
+      <h4><span class="chip sf">Salesforce</span> Connected App credentials</h4>
+      <p class="hint">Create a Connected App in Salesforce (enable the <b>Client Credentials Flow</b>), then paste its details here.</p>
+      <div class="frow"><label>My Domain / Instance URL</label><input id="sfUrl" placeholder="https://your-org.my.salesforce.com"></div>
+      <div class="frow"><label>Consumer Key (Client ID)</label><input id="sfClientId" placeholder="3MVG9…"></div>
+      <div class="frow"><label>Consumer Secret (Client Secret)</label><input id="sfClientSecret" type="password" placeholder="leave blank to keep existing"></div>
+      <div class="frow" style="max-width:160px"><label>API version</label><input id="sfApiVersion" placeholder="62.0" value="62.0"></div>
+      <div class="connfoot">
+        <button onclick="saveTestSf()">Save &amp; test</button>
+        <span id="sfConnStat" class="connstat"></span>
+      </div>
+    </div>
+
+    <div class="connsec">
+      <h4><span class="chip gd">Google Drive</span> Sign in with Google</h4>
+      <p class="hint">Create an OAuth <b>Desktop app</b> client in Google Cloud (Drive API enabled), paste its ID &amp; secret, save, then click <b>Connect Google</b> to sign in. CSV files are uploaded to the folder below.</p>
+      <div class="frow"><label>OAuth Client ID</label><input id="gClientId" placeholder="…apps.googleusercontent.com"></div>
+      <div class="frow"><label>OAuth Client Secret</label><input id="gClientSecret" type="password" placeholder="leave blank to keep existing"></div>
+      <div class="frow"><label>Target Drive folder (URL or ID) — optional</label><input id="gFolder" placeholder="https://drive.google.com/drive/folders/…"></div>
+      <div class="connfoot">
+        <button class="ghost" onclick="saveGoogle()">Save</button>
+        <button onclick="connectGoogle()" style="background:var(--gdrive)">Connect Google</button>
+        <span id="gConnStat" class="connstat"></span>
+      </div>
+    </div>
+
+    <div style="text-align:right"><button class="ghost" onclick="document.getElementById('connModal').classList.add('hidden')">Close</button></div>
   </div>
 </div>
 
@@ -193,48 +236,122 @@
 <script>
 let tallyTables = [], sfObjects = [];
 const sfFieldCache = {};
-let state = { name:'', mappings: [], cur: -1, savedNames: [] };
+let sess = { salesforce:{connected:false}, google:{connected:false} };
+let state = { name:'', destination:'salesforce', mappings: [], cur: -1, savedNames: [] };
 const genId = () => 'm' + Math.random().toString(36).slice(2,7);
 const normalizeOm = o => ({ id:o.id||genId(), sourceObject:o.sourceObject||'', targetObject:o.targetObject||'', externalIdField:o.externalIdField||'', filter:o.filter||null, fields:o.fields||[], relationships:o.relationships||[] });
+const isDrive = () => state.destination==='googledrive';
 
 async function init(){
-  const s = await (await fetch('/api/session')).json();
-  const on = s.connected;
-  document.getElementById('statusText').textContent = on ? ('Connected · '+(s.user||'')) : 'Not connected';
-  document.getElementById('status').className = 'status'+(on?' on':'');
-  document.getElementById('connectBtn').classList.toggle('hidden', on);
-  document.getElementById('disconnectBtn').classList.toggle('hidden', !on);
-  document.getElementById('hero').classList.toggle('hidden', on);
-  document.getElementById('app').classList.toggle('hidden', !on);
-  if(on){
-    await loadTally(); await loadSfObjects(); await loadDocList();
-    if(state.savedNames.length){ await loadDoc(state.savedNames[0]); } else { newDoc(); }
-  }
+  await refreshSession();
+  await loadTally();
+  if(sess.salesforce.connected){ await loadSfObjects(); }
+  await loadDocList();
+  if(state.savedNames.length){ await loadDoc(state.savedNames[0]); } else { newDoc(); }
 }
+async function refreshSession(){
+  try{ sess = await (await fetch('/api/session')).json(); }catch(e){ sess={salesforce:{connected:false},google:{connected:false}}; }
+  paintStatus('sf', sess.salesforce.connected, sess.salesforce.connected? ('Salesforce · '+(sess.salesforce.user||'')) : 'Salesforce');
+  paintStatus('g', sess.google.connected, sess.google.connected? ('Google · '+(sess.google.email||'')) : 'Google Drive');
+}
+function paintStatus(which, on, text){
+  document.getElementById(which+'StatusText').textContent = text;
+  document.getElementById(which+'Status').className = 'status'+(on?' on':'');
+}
+
 async function loadDocList(){ state.savedNames = (await (await fetch('/api/mappings')).json()).mappings || []; renderDocList(); }
 function renderDocList(){ document.getElementById('loadSelect').innerHTML = '<option value="">— saved mappings —</option>' + state.savedNames.map(n=>`<option value="${n}">${n}</option>`).join(''); }
 function onLoadSelect(){ const n=document.getElementById('loadSelect').value; if(n) loadDoc(n); }
 async function loadDoc(name){
   const d = await (await fetch('/api/mappings/get?name='+encodeURIComponent(name))).json();
-  state.name = d.name||name; state.mappings = (d.objectMappings||[]).map(normalizeOm); state.cur = state.mappings.length?0:-1;
-  document.getElementById('docName').value = state.name; document.getElementById('loadSelect').value = name;
+  state.name = d.name||name; state.destination = d.destination||'salesforce';
+  state.mappings = (d.objectMappings||[]).map(normalizeOm); state.cur = state.mappings.length?0:-1;
+  document.getElementById('docName').value = state.name;
+  document.getElementById('destSelect').value = state.destination;
+  document.getElementById('loadSelect').value = name;
+  applyDestChrome();
   renderTabs(); if(state.cur>=0) loadEditor(); else showNoMapping();
 }
-function newDoc(){ state.name=''; state.mappings=[]; state.cur=-1; document.getElementById('docName').value=''; document.getElementById('loadSelect').value=''; renderTabs(); showNoMapping(); }
+function newDoc(){ state.name=''; state.mappings=[]; state.cur=-1; document.getElementById('docName').value=''; document.getElementById('loadSelect').value=''; applyDestChrome(); renderTabs(); showNoMapping(); }
 async function deleteDoc(){
   const n=document.getElementById('docName').value.trim(); if(!n) return;
   if(!confirm('Delete mapping "'+n+'"?')) return;
   await fetch('/api/mappings/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});
   await loadDocList(); newDoc();
 }
-async function connectSf(){ const b=document.getElementById('connectBtn'); b.disabled=true; document.getElementById('statusText').textContent='Opening Salesforce login…'; try{await fetch('/api/connect',{method:'POST'});}catch(e){} b.disabled=false; await init(); }
-async function disconnect(){ await fetch('/api/disconnect'); location.reload(); }
+function onDestChange(){ state.destination = document.getElementById('destSelect').value; applyDestChrome(); if(state.cur>=0) loadEditor(); else showNoMapping(); }
 
-async function loadTally(){ tallyTables = (await (await fetch('/api/tally/tables')).json()).tables; }
-async function loadSfObjects(){ sfObjects = (await (await fetch('/api/salesforce/objects')).json()).objects || []; }
+// Swap chrome (labels + which fieldsets show) for the current destination
+function applyDestChrome(){
+  const drive = isDrive();
+  document.querySelectorAll('.sfonly').forEach(el=>el.classList.toggle('hidden', drive));
+  document.querySelectorAll('.driveonly').forEach(el=>el.classList.toggle('hidden', !drive));
+  document.getElementById('addLabel').textContent = drive ? 'table export' : 'object mapping';
+  document.getElementById('syncLabel').innerHTML = drive ? '▶ Export all' : '▶ Sync all';
+  document.getElementById('noMapText').innerHTML = drive
+    ? 'No table exports yet.<br>Click <b>＋ Add</b> to export a Tally table to a CSV on Google Drive.'
+    : 'No object mappings yet.<br>Click <b>＋ Add</b> to map a Tally table to a Salesforce object.';
+  const chip = document.getElementById('tgtChip');
+  chip.className = 'chip '+(drive?'gd':'sf'); chip.textContent = drive?'CSV columns':'Salesforce';
+  document.getElementById('addColBtn').classList.toggle('hidden', !drive);
+  document.getElementById('addAllBtn').classList.toggle('hidden', !drive);
+}
+
+// ---- Connections modal ----
+async function openConnections(){
+  const c = await (await fetch('/api/connections')).json();
+  document.getElementById('sfUrl').value = c.salesforce.instanceUrl;
+  document.getElementById('sfClientId').value = c.salesforce.clientId;
+  document.getElementById('sfClientSecret').value = '';
+  document.getElementById('sfClientSecret').placeholder = c.salesforce.hasSecret ? 'saved — leave blank to keep' : 'Consumer Secret';
+  document.getElementById('sfApiVersion').value = c.salesforce.apiVersion;
+  document.getElementById('gClientId').value = c.google.clientId;
+  document.getElementById('gClientSecret').value = '';
+  document.getElementById('gClientSecret').placeholder = c.google.hasSecret ? 'saved — leave blank to keep' : 'OAuth Client Secret';
+  document.getElementById('gFolder').value = c.google.folderId;
+  document.getElementById('sfConnStat').textContent = sess.salesforce.connected ? '✓ connected' : '';
+  document.getElementById('sfConnStat').className = 'connstat'+(sess.salesforce.connected?' ok':'');
+  setGoogleStat(c.google.connected, sess.google.email);
+  document.getElementById('connModal').classList.remove('hidden');
+}
+function setGoogleStat(on, email){ const s=document.getElementById('gConnStat'); s.textContent = on ? ('✓ connected'+(email?' · '+email:'')) : ''; s.className='connstat'+(on?' ok':''); }
+
+async function saveTestSf(){
+  const stat=document.getElementById('sfConnStat'); stat.textContent='Saving…'; stat.className='connstat';
+  await fetch('/api/connections/salesforce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    instanceUrl:document.getElementById('sfUrl').value, clientId:document.getElementById('sfClientId').value,
+    clientSecret:document.getElementById('sfClientSecret').value, apiVersion:document.getElementById('sfApiVersion').value })});
+  stat.textContent='Testing…';
+  const r = await (await fetch('/api/salesforce/test',{method:'POST'})).json();
+  if(r.connected){ stat.textContent='✓ connected · '+(r.user||''); stat.className='connstat ok'; await refreshSession(); await loadSfObjects(); }
+  else { stat.textContent='✕ '+(r.error||'failed'); stat.className='connstat bad'; }
+}
+async function saveGoogle(){
+  const stat=document.getElementById('gConnStat'); stat.textContent='Saving…'; stat.className='connstat';
+  await fetch('/api/connections/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    clientId:document.getElementById('gClientId').value, clientSecret:document.getElementById('gClientSecret').value,
+    folderId:document.getElementById('gFolder').value })});
+  stat.textContent='✓ saved'; stat.className='connstat ok';
+}
+async function connectGoogle(){
+  await saveGoogle();
+  const r = await (await fetch('/api/google/auth-url')).json();
+  if(r.error){ const s=document.getElementById('gConnStat'); s.textContent='✕ '+r.error; s.className='connstat bad'; return; }
+  const w = window.open(r.url, 'googleauth', 'width=520,height=680');
+  const stat=document.getElementById('gConnStat'); stat.textContent='Waiting for Google sign-in…'; stat.className='connstat';
+  // poll session until Google connected (or the popup closes)
+  let tries=0; const timer=setInterval(async ()=>{
+    tries++; await refreshSession();
+    if(sess.google.connected){ clearInterval(timer); setGoogleStat(true, sess.google.email); try{w&&w.close();}catch(e){} }
+    else if(tries>150){ clearInterval(timer); }
+  }, 2000);
+}
+
+async function loadTally(){ try{ tallyTables = (await (await fetch('/api/tally/tables')).json()).tables || []; }catch(e){ tallyTables=[]; } }
+async function loadSfObjects(){ try{ sfObjects = (await (await fetch('/api/salesforce/objects')).json()).objects || []; }catch(e){ sfObjects=[]; } }
 async function getSfFields(obj){ if(!obj) return []; if(sfFieldCache[obj]) return sfFieldCache[obj]; const d = await (await fetch('/api/salesforce/object/'+encodeURIComponent(obj))).json(); sfFieldCache[obj]=d.fields||[]; return sfFieldCache[obj]; }
 
-function tabLabel(m){ return (m.targetObject || 'new') + (m.sourceObject? ' ← '+m.sourceObject : ''); }
+function tabLabel(m){ if(isDrive()) return (m.targetObject||m.sourceObject||'new'); return (m.targetObject || 'new') + (m.sourceObject? ' ← '+m.sourceObject : ''); }
 function renderTabs(){
   document.getElementById('mapTabs').innerHTML = state.mappings.map((m,i)=>
     `<div class="maptab${i===state.cur?' active':''}" onclick="selectTab(${i})">${tabLabel(m)}<span class="x" onclick="event.stopPropagation();deleteMapping(${i})">✕</span></div>`).join('');
@@ -251,20 +368,22 @@ async function loadEditor(){
   const m = curM(); if(!m) return showNoMapping();
   document.getElementById('noMapping').classList.add('hidden');
   document.getElementById('editor').classList.remove('hidden');
-  // source
+  applyDestChrome();
   document.getElementById('tallyTable').innerHTML = tallyTables.map(t=>`<option value="${t.name}">${t.name}${t.isMaster?' · master':''}</option>`).join('');
   document.getElementById('tallyTable').value = m.sourceObject || tallyTables[0]?.name;
   showSourceFields();
-  // target
-  document.getElementById('sfObject').innerHTML = '<option value="">— choose object —</option>' + sfObjects.map(o=>`<option value="${o.name}">${o.label} · ${o.name}</option>`).join('');
-  document.getElementById('sfObject').value = m.targetObject || '';
-  // filter
   applyFilterToUI(m);
-  // target fields + rows + relationships
-  await refreshTarget();
+  if(isDrive()){
+    document.getElementById('driveFileName').value = m.targetObject || '';
+    buildExportRows();
+  } else {
+    document.getElementById('sfObject').innerHTML = '<option value="">— choose object —</option>' + sfObjects.map(o=>`<option value="${o.name}">${o.label} · ${o.name}</option>`).join('');
+    document.getElementById('sfObject').value = m.targetObject || '';
+    await refreshTarget();
+  }
 }
 function showSourceFields(){
-  const t = curTable(); if(!t) return;
+  const t = curTable(); if(!t){ document.getElementById('tallyFields').innerHTML=''; return; }
   document.getElementById('srcTitle').textContent = t.name;
   document.getElementById('srcCount').textContent = t.fields.length+' fields';
   document.getElementById('tallyFields').innerHTML = t.fields.map(f=>`<div class="srcfield"><span class="n">${f.name}</span><span class="meta">${f.datatype}</span></div>`).join('');
@@ -276,8 +395,9 @@ function applyFilterToUI(m){
   document.getElementById('filterOp').value = m.filter?.operator || '==';
   document.getElementById('filterValue').value = m.filter?.value || '';
 }
-function onSourceChange(){ const m=curM(); m.sourceObject=document.getElementById('tallyTable').value; m.filter=null; showSourceFields(); applyFilterToUI(m); buildMapRows(); renderRelationships(); renderTabs(); }
+function onSourceChange(){ const m=curM(); m.sourceObject=document.getElementById('tallyTable').value; m.filter=null; showSourceFields(); applyFilterToUI(m); if(isDrive()) buildExportRows(); else { buildMapRows(); renderRelationships(); } renderTabs(); }
 async function onTargetChange(){ const m=curM(); m.targetObject=document.getElementById('sfObject').value; renderTabs(); await refreshTarget(); }
+function onDriveNameChange(){ const m=curM(); m.targetObject=document.getElementById('driveFileName').value; renderTabs(); }
 
 async function refreshTarget(){
   const m = curM();
@@ -288,6 +408,12 @@ async function refreshTarget(){
   buildMapRows(); renderRelationships();
 }
 
+function xformOptions(sel){
+  const o=[['none','ƒ no transform'],['abs','ƒ absolute value'],['trim','ƒ trim spaces'],['upper','ƒ UPPERCASE'],['lower','ƒ lowercase'],['date','ƒ date (YYYY-MM-DD)'],['number','ƒ number']];
+  return o.map(([v,l])=>`<option value="${v}"${sel===v?' selected':''}>${l}</option>`).join('');
+}
+
+// ---- Salesforce field mapping ----
 function buildMapRows(){
   const t = curTable(); const m = curM();
   const fields = sfFieldCache[m.targetObject] || [];
@@ -314,13 +440,9 @@ function buildMapRows(){
         <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${constVal.replace(/"/g,'&quot;')}">
       </div>
       <div class="arrow">→</div>
-      <div class="tgt"><div class="lbl">${tf.label}${tf.required?' <span class="badge req">required</span>':''}${tf.externalId?' <span class="badge ext">ext id</span>':''}${tf.reference?' <span class="badge rel">lookup</span>':''}</div><div class="api">${tf.name} · ${tf.type}</div></div>
+      <div class="tgt"><div><div class="lbl">${tf.label}${tf.required?' <span class="badge req">required</span>':''}${tf.externalId?' <span class="badge ext">ext id</span>':''}${tf.reference?' <span class="badge rel">lookup</span>':''}</div><div class="api">${tf.name} · ${tf.type}</div></div></div>
     </div>`;
   }).join('');
-}
-function xformOptions(sel){
-  const o=[['none','ƒ no transform'],['abs','ƒ absolute value'],['trim','ƒ trim spaces'],['upper','ƒ UPPERCASE'],['lower','ƒ lowercase'],['date','ƒ date (YYYY-MM-DD)'],['number','ƒ number']];
-  return o.map(([v,l])=>`<option value="${v}"${sel===v?' selected':''}>${l}</option>`).join('');
 }
 function onSrcChange(sel){
   const cell = sel.parentElement;
@@ -328,12 +450,46 @@ function onSrcChange(sel){
   cell.querySelector('.xform').classList.toggle('hidden', !sel.value.startsWith('src:'));
 }
 
+// ---- Google Drive CSV column mapping ----
+function exportRowHtml(col){
+  const t = curTable();
+  const srcOpts = (t?t.fields:[]).map(s=>`<option value="src:${s.name}">${s.name}</option>`).join('');
+  let selVal='', constVal='';
+  if(col){ if('constant' in col){ selVal='__const__'; constVal=col.constant; } else selVal='src:'+col.source; }
+  const isSrc = selVal.startsWith('src:');
+  const opts = `<option value="">— choose source —</option><option value="__const__">＝ constant value…</option>${srcOpts}`
+    .replace(`value="${selVal}"`, `value="${selVal}" selected`);
+  const xf = col && col.transform ? col.transform : 'none';
+  const colName = col ? (col.target||'') : '';
+  return `<div class="maprow" data-name="${(colName||'').toLowerCase()}">
+    <div class="src">
+      <select class="dsrc" onchange="onSrcChange(this)">${opts}</select>
+      <select class="xform${isSrc?'':' hidden'}">${xformOptions(xf)}</select>
+      <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${(constVal+'').replace(/"/g,'&quot;')}">
+    </div>
+    <div class="arrow">→</div>
+    <div class="tgt"><input class="colname" placeholder="CSV column name" value="${(colName).replace(/"/g,'&quot;')}"><span class="rx" onclick="this.closest('.maprow').remove()">✕</span></div>
+  </div>`;
+}
+function buildExportRows(){
+  const m = curM();
+  document.getElementById('mapTitle').textContent = 'CSV columns';
+  const cols = (m.fields&&m.fields.length)? m.fields : [];
+  document.getElementById('mapCount').textContent = cols.length? cols.length+' columns':'';
+  document.getElementById('mapRows').innerHTML = cols.length
+    ? cols.map(c=>exportRowHtml(c)).join('')
+    : '<div class="maphint"><div class="big">📄</div>Add the Tally fields you want as CSV columns.</div>';
+}
+function addColumn(){ document.getElementById('mapRows').querySelector('.maphint')?.remove(); document.getElementById('mapRows').insertAdjacentHTML('beforeend', exportRowHtml(null)); }
+function addAllColumns(){ const t=curTable(); if(!t) return; const rows=t.fields.map(f=>exportRowHtml({source:f.name, target:f.name})).join(''); document.getElementById('mapRows').innerHTML = rows; }
+
+// ---- relationships (salesforce only) ----
 function renderRelationships(){
   const m = curM(); const t = curTable();
   const fields = sfFieldCache[m.targetObject] || [];
   const refFields = fields.filter(f=>f.reference && f.createable);
   const others = state.mappings.filter(x=>x.id!==m.id && x.targetObject);
-  document.getElementById('relSection').style.display = (refFields.length && others.length) ? '' : 'none';
+  document.getElementById('relSection').style.display = (!isDrive() && refFields.length && others.length) ? '' : 'none';
   const lookupOpts = r => refFields.map(f=>`<option value="${f.name}"${r&&r.targetField===f.name?' selected':''}>${f.label} (${f.name})</option>`).join('');
   const parentOpts = r => others.map(o=>`<option value="${o.id}"${r&&r.parentMapping===o.id?' selected':''}>${o.targetObject}</option>`).join('');
   const keyOpts = r => (t?t.fields:[]).map(s=>`<option value="${s.name}"${r&&r.sourceKey===s.name?' selected':''}>${s.name}</option>`).join('');
@@ -352,21 +508,32 @@ function removeRel(i){ captureCurrent(); curM().relationships.splice(i,1); rende
 function captureCurrent(){
   const m = curM(); if(!m) return;
   m.sourceObject = document.getElementById('tallyTable').value;
-  m.targetObject = document.getElementById('sfObject').value;
-  m.externalIdField = document.getElementById('externalId').value;
   const ff = document.getElementById('filterField').value;
   m.filter = ff ? { field:ff, operator:document.getElementById('filterOp').value, value:document.getElementById('filterValue').value } : null;
-  m.fields = [...document.querySelectorAll('#mapRows .maprow')].map(row=>{
-    const sel = row.querySelector('.srcsel'); const target = sel.dataset.target;
-    if(sel.value==='__const__') return { target, constant: row.querySelector('.constinput').value };
-    if(sel.value.startsWith('src:')){ const x = row.querySelector('.xform').value; const f = { source: sel.value.slice(4), target }; if(x && x!=='none') f.transform = x; return f; }
-    return null;
-  }).filter(Boolean);
-  m.relationships = [...document.querySelectorAll('#relRows .relrow')].map(row=>{
-    const g = k => { const el = row.querySelector(`[data-k="${k}"]`); return el ? el.value : ''; };
-    const r = { targetField:g('targetField'), parentMapping:g('parentMapping'), sourceKey:g('sourceKey'), parentMatchField:g('parentMatchField') };
-    return (r.targetField && r.parentMapping && r.sourceKey) ? r : null;
-  }).filter(Boolean);
+  if(isDrive()){
+    m.targetObject = document.getElementById('driveFileName').value;
+    m.externalIdField=''; m.relationships=[];
+    m.fields = [...document.querySelectorAll('#mapRows .maprow')].map(row=>{
+      const sel=row.querySelector('.dsrc'); const target=(row.querySelector('.colname').value||'').trim(); if(!target) return null;
+      if(sel.value==='__const__') return { target, constant: row.querySelector('.constinput').value };
+      if(sel.value.startsWith('src:')){ const x=row.querySelector('.xform').value; const f={ source: sel.value.slice(4), target }; if(x&&x!=='none') f.transform=x; return f; }
+      return null;
+    }).filter(Boolean);
+  } else {
+    m.targetObject = document.getElementById('sfObject').value;
+    m.externalIdField = document.getElementById('externalId').value;
+    m.fields = [...document.querySelectorAll('#mapRows .maprow')].map(row=>{
+      const sel = row.querySelector('.srcsel'); const target = sel.dataset.target;
+      if(sel.value==='__const__') return { target, constant: row.querySelector('.constinput').value };
+      if(sel.value.startsWith('src:')){ const x = row.querySelector('.xform').value; const f = { source: sel.value.slice(4), target }; if(x && x!=='none') f.transform = x; return f; }
+      return null;
+    }).filter(Boolean);
+    m.relationships = [...document.querySelectorAll('#relRows .relrow')].map(row=>{
+      const g = k => { const el = row.querySelector(`[data-k="${k}"]`); return el ? el.value : ''; };
+      const r = { targetField:g('targetField'), parentMapping:g('parentMapping'), sourceKey:g('sourceKey'), parentMatchField:g('parentMatchField') };
+      return (r.targetField && r.parentMapping && r.sourceKey) ? r : null;
+    }).filter(Boolean);
+  }
 }
 
 function filterSrc(){ const q=document.getElementById('srcSearch').value.toLowerCase(); document.querySelectorAll('#tallyFields .srcfield').forEach(el=>{ el.style.display=el.textContent.toLowerCase().includes(q)?'':'none'; }); }
@@ -378,16 +545,20 @@ async function saveAll(){
   const m = document.getElementById('saveMsg');
   if(!name){ m.textContent='⚠ Name the mapping first'; m.style.color='#b42318'; setTimeout(()=>{m.textContent='';m.style.color='';},2600); document.getElementById('docName').focus(); return false; }
   state.name = name;
-  await fetch('/api/mappings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, objectMappings:state.mappings})});
+  await fetch('/api/mappings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, destination:state.destination, objectMappings:state.mappings})});
   await loadDocList(); document.getElementById('loadSelect').value='';
   m.textContent='✓ Saved "'+name+'"'; m.style.color=''; setTimeout(()=>m.textContent='',2600);
   return true;
 }
 async function runSync(){
+  const drive = isDrive();
+  await refreshSession();
+  if(drive && !sess.google.connected){ alert('Connect Google Drive first (⚙ Connections).'); return openConnections(); }
+  if(!drive && !sess.salesforce.connected){ alert('Connect Salesforce first (⚙ Connections).'); return openConnections(); }
   if(!(await saveAll())) return;
-  const btn=document.querySelector('.mapbar .sync'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Syncing…';
+  const btn=document.querySelector('.mapbar .sync'); btn.disabled=true; btn.innerHTML='<span class="spin"></span>'+(drive?'Exporting…':'Syncing…');
   const box=document.getElementById('runResults'); const title=document.getElementById('runTitle');
-  title.textContent='Syncing to Salesforce…';
+  title.textContent = drive?'Uploading CSVs to Google Drive…':'Syncing to Salesforce…';
   box.innerHTML='<p class="pending"><span class="spin dark"></span> Starting…</p>';
   document.getElementById('runModal').classList.remove('hidden');
   const rows={}; let up=0, fail=0, ok=false;
@@ -404,17 +575,17 @@ async function runSync(){
             : '<p>Nothing to sync — this mapping has no complete objects.</p>';
           ev.objects.forEach(o=> rows[o.targetObject]=box.querySelector(`[data-obj="${o.targetObject}"] .st`));
         }
-        else if(ev.type==='progress'){ if(rows[ev.targetObject]) rows[ev.targetObject].innerHTML='<span class="spin dark"></span> syncing…'; }
+        else if(ev.type==='progress'){ if(rows[ev.targetObject]) rows[ev.targetObject].innerHTML='<span class="spin dark"></span> '+(drive?'uploading…':'syncing…'); }
         else if(ev.type==='object'){ up+=ev.success; fail+=ev.failed; const st=rows[ev.targetObject];
-          if(st) st.innerHTML=`<span class="ok">✓ ${ev.success} upserted</span>${ev.failed?` · <span class="err">${ev.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${ev.total})</span>${(ev.errors&&ev.errors.length)?`<ul>${ev.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}`; }
+          if(st) st.innerHTML=`<span class="ok">✓ ${ev.success} ${drive?'row(s)':'upserted'}</span>${ev.failed?` · <span class="err">${ev.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${ev.total})</span>${(ev.errors&&ev.errors.length)?`<ul>${ev.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}`; }
         else if(ev.type==='done'){ ok=true; }
         else if(ev.type==='error'){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${ev.message}</p>`); }
       }
     }
   }catch(e){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${e}</p>`); }
-  btn.disabled=false; btn.innerHTML='▶ Sync all';
-  if(ok){ title.innerHTML='<span style="color:var(--ok)">✓ Sync complete</span>'; box.insertAdjacentHTML('beforeend', `<div class="donebanner">✓ Sync complete — ${up} record(s) upserted${fail?` · ${fail} failed`:''}</div>`); }
-  else { title.textContent='Sync finished with errors'; }
+  btn.disabled=false; btn.innerHTML = drive?'▶ Export all':'▶ Sync all';
+  if(ok){ title.innerHTML='<span style="color:var(--ok)">✓ '+(drive?'Export complete':'Sync complete')+'</span>'; box.insertAdjacentHTML('beforeend', `<div class="donebanner">✓ ${drive?'Export':'Sync'} complete — ${up} row(s) ${drive?'exported':'upserted'}${fail?` · ${fail} failed`:''}</div>`); }
+  else { title.textContent = (drive?'Export':'Sync')+' finished with errors'; }
 }
 
 init();
