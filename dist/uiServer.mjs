@@ -12,9 +12,20 @@ import { URL } from 'node:url';
 //     stored and used to upload generated CSV files to Google Drive.
 //
 // A mapping document targets ONE destination ('salesforce' or 'googledrive').
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const MAP_DIR = './mappings';
 const CONN_FILE = './connections.json';
+const CLIENT_FILE = './client.json';
+function loadClient() {
+    if (process.env.UNLOCK === '1')
+        return { locked: false }; // baking a client build: allow editing the fixed connection
+    try {
+        return JSON.parse(fs.readFileSync(CLIENT_FILE, 'utf8'));
+    }
+    catch {
+        return { locked: false };
+    }
+}
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/google/callback`;
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 function ensureMapDir() { if (!fs.existsSync(MAP_DIR))
@@ -343,6 +354,16 @@ const server = http.createServer(async (req, res) => {
                 google: { connected: !!gt, email: gt ? await googleEmail(gt) : '' }
             });
         }
+        // --- client lockdown profile ---
+        if (url.pathname === '/api/client') {
+            const p = loadClient();
+            let google = { connected: false, email: '', folderId: '' };
+            if (p.locked) {
+                const gt = await googleToken();
+                google = { connected: !!gt, email: gt ? await googleEmail(gt) : '', folderId: loadConn().google.folderId || '' };
+            }
+            return json(200, { name: p.name || '', locked: !!p.locked, destination: p.destination || '', hideSalesforce: !!p.hideSalesforce, lockGoogle: !!p.lockGoogle, google });
+        }
         // --- connections config ---
         if (url.pathname === '/api/connections' && req.method === 'GET') {
             const c = loadConn();
@@ -353,6 +374,8 @@ const server = http.createServer(async (req, res) => {
             });
         }
         if (url.pathname === '/api/connections/salesforce' && req.method === 'POST') {
+            if (loadClient().hideSalesforce)
+                return json(403, { error: 'Salesforce is disabled for this build' });
             const b = JSON.parse(await readBody(req));
             const c = loadConn();
             c.salesforce.instanceUrl = (b.instanceUrl || '').trim();
@@ -365,6 +388,8 @@ const server = http.createServer(async (req, res) => {
             return json(200, { saved: true });
         }
         if (url.pathname === '/api/connections/google' && req.method === 'POST') {
+            if (loadClient().lockGoogle)
+                return json(403, { error: 'The Google destination is fixed for this build' });
             const b = JSON.parse(await readBody(req));
             const c = loadConn();
             c.google.clientId = (b.clientId || '').trim();
@@ -396,7 +421,7 @@ const server = http.createServer(async (req, res) => {
             const g = loadConn().google;
             if (!g.clientId || !g.clientSecret)
                 return json(400, { error: 'Enter Google Client ID and Secret first' });
-            const p = new URLSearchParams({ client_id: g.clientId, redirect_uri: REDIRECT_URI, response_type: 'code', scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' });
+            const p = new URLSearchParams({ client_id: g.clientId, redirect_uri: REDIRECT_URI, response_type: 'code', scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'select_account consent', include_granted_scopes: 'true' });
             return json(200, { url: `https://accounts.google.com/o/oauth2/v2/auth?${p.toString()}` });
         }
         if (url.pathname === '/oauth/google/callback') {
@@ -477,7 +502,9 @@ const server = http.createServer(async (req, res) => {
             ensureMapDir();
             const doc = JSON.parse(await readBody(req));
             const name = mapSlug(doc.name);
-            fs.writeFileSync(`${MAP_DIR}/${name}.json`, JSON.stringify({ name, destination: doc.destination || 'salesforce', objectMappings: doc.objectMappings || [] }, null, 2));
+            const cp = loadClient();
+            const destination = (cp.locked && cp.destination) ? cp.destination : (doc.destination || 'salesforce');
+            fs.writeFileSync(`${MAP_DIR}/${name}.json`, JSON.stringify({ name, destination, objectMappings: doc.objectMappings || [] }, null, 2));
             return json(200, { saved: true, name });
         }
         if (url.pathname === '/api/mappings/delete' && req.method === 'POST') {

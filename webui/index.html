@@ -198,7 +198,7 @@
     <h3>Connections</h3>
     <p class="sub">Configure where your Tally data goes. Stored locally on this machine only.</p>
 
-    <div class="connsec">
+    <div class="connsec" id="sfConnSec">
       <h4><span class="chip sf">Salesforce</span> Connected App credentials</h4>
       <p class="hint">Create a Connected App in Salesforce (enable the <b>Client Credentials Flow</b>), then paste its details here.</p>
       <div class="frow"><label>My Domain / Instance URL</label><input id="sfUrl" placeholder="https://your-org.my.salesforce.com"></div>
@@ -211,17 +211,20 @@
       </div>
     </div>
 
-    <div class="connsec">
+    <div class="connsec" id="gConnSec">
       <h4><span class="chip gd">Google Drive</span> Sign in with Google</h4>
-      <p class="hint">Create an OAuth <b>Desktop app</b> client in Google Cloud (Drive API enabled), paste its ID &amp; secret, save, then click <b>Connect Google</b> to sign in. CSV files are uploaded to the folder below.</p>
-      <div class="frow"><label>OAuth Client ID</label><input id="gClientId" placeholder="…apps.googleusercontent.com"></div>
-      <div class="frow"><label>OAuth Client Secret</label><input id="gClientSecret" type="password" placeholder="leave blank to keep existing"></div>
-      <div class="frow"><label>Target Drive folder (URL or ID) — optional</label><input id="gFolder" placeholder="https://drive.google.com/drive/folders/…"></div>
-      <div class="connfoot">
-        <button class="ghost" onclick="saveGoogle()">Save</button>
-        <button onclick="connectGoogle()" style="background:var(--gdrive)">Connect Google</button>
-        <span id="gConnStat" class="connstat"></span>
+      <div id="gEditable">
+        <p class="hint">Create an OAuth <b>Desktop app</b> client in Google Cloud (Drive API enabled), paste its ID &amp; secret, save, then click <b>Connect Google</b> to sign in. CSV files are uploaded to the folder below.</p>
+        <div class="frow"><label>OAuth Client ID</label><input id="gClientId" placeholder="…apps.googleusercontent.com"></div>
+        <div class="frow"><label>OAuth Client Secret</label><input id="gClientSecret" type="password" placeholder="leave blank to keep existing"></div>
+        <div class="frow"><label>Target Drive folder (URL or ID) — optional</label><input id="gFolder" placeholder="https://drive.google.com/drive/folders/…"></div>
+        <div class="connfoot">
+          <button class="ghost" onclick="saveGoogle()">Save</button>
+          <button onclick="connectGoogle()" style="background:var(--gdrive)">Connect Google</button>
+          <span id="gConnStat" class="connstat"></span>
+        </div>
       </div>
+      <div id="gLockedInfo" class="hidden"></div>
     </div>
 
     <div style="text-align:right"><button class="ghost" onclick="document.getElementById('connModal').classList.add('hidden')">Close</button></div>
@@ -237,18 +240,31 @@
 let tallyTables = [], sfObjects = [];
 const sfFieldCache = {};
 let sess = { salesforce:{connected:false}, google:{connected:false} };
+let client = { locked:false };
 let state = { name:'', destination:'salesforce', mappings: [], cur: -1, savedNames: [] };
 const genId = () => 'm' + Math.random().toString(36).slice(2,7);
 const normalizeOm = o => ({ id:o.id||genId(), sourceObject:o.sourceObject||'', targetObject:o.targetObject||'', externalIdField:o.externalIdField||'', filter:o.filter||null, fields:o.fields||[], relationships:o.relationships||[] });
 const isDrive = () => state.destination==='googledrive';
 
 async function init(){
+  await loadClientProfile();
   await refreshSession();
   await loadTally();
-  if(sess.salesforce.connected){ await loadSfObjects(); }
+  if(!client.hideSalesforce && sess.salesforce.connected){ await loadSfObjects(); }
   await loadDocList();
   if(state.savedNames.length){ await loadDoc(state.savedNames[0]); } else { newDoc(); }
 }
+async function loadClientProfile(){
+  try{ client = await (await fetch('/api/client')).json(); }catch(e){ client = { locked:false }; }
+  if(!client.locked) return;
+  if(client.name){ document.querySelector('.brand').innerHTML = `<span class="logo">⚡</span> ${client.name}`; document.title = client.name; }
+  if(client.destination){ state.destination = client.destination; }
+  // hide the destination selector + its label (pinned for this build)
+  const ds = document.getElementById('destSelect'); ds.value = client.destination || ds.value;
+  ds.style.display = 'none'; ds.previousElementSibling.style.display = 'none';
+  if(client.hideSalesforce){ document.getElementById('sfStatus').style.display = 'none'; }
+}
+function lockedDest(){ return (client.locked && client.destination) ? client.destination : null; }
 async function refreshSession(){
   try{ sess = await (await fetch('/api/session')).json(); }catch(e){ sess={salesforce:{connected:false},google:{connected:false}}; }
   paintStatus('sf', sess.salesforce.connected, sess.salesforce.connected? ('Salesforce · '+(sess.salesforce.user||'')) : 'Salesforce');
@@ -264,7 +280,7 @@ function renderDocList(){ document.getElementById('loadSelect').innerHTML = '<op
 function onLoadSelect(){ const n=document.getElementById('loadSelect').value; if(n) loadDoc(n); }
 async function loadDoc(name){
   const d = await (await fetch('/api/mappings/get?name='+encodeURIComponent(name))).json();
-  state.name = d.name||name; state.destination = d.destination||'salesforce';
+  state.name = d.name||name; state.destination = lockedDest() || d.destination || 'salesforce';
   state.mappings = (d.objectMappings||[]).map(normalizeOm); state.cur = state.mappings.length?0:-1;
   document.getElementById('docName').value = state.name;
   document.getElementById('destSelect').value = state.destination;
@@ -299,6 +315,7 @@ function applyDestChrome(){
 
 // ---- Connections modal ----
 async function openConnections(){
+  if(client.locked){ return openLockedConnections(); }
   const c = await (await fetch('/api/connections')).json();
   document.getElementById('sfUrl').value = c.salesforce.instanceUrl;
   document.getElementById('sfClientId').value = c.salesforce.clientId;
@@ -315,6 +332,23 @@ async function openConnections(){
   document.getElementById('connModal').classList.remove('hidden');
 }
 function setGoogleStat(on, email){ const s=document.getElementById('gConnStat'); s.textContent = on ? ('✓ connected'+(email?' · '+email:'')) : ''; s.className='connstat'+(on?' ok':''); }
+
+// Read-only Connections view for a locked client build (fixed Google account/folder)
+async function openLockedConnections(){
+  const cl = await (await fetch('/api/client')).json();
+  if(cl.hideSalesforce) document.getElementById('sfConnSec').classList.add('hidden');
+  document.getElementById('gEditable').classList.add('hidden');
+  const g = cl.google || {};
+  const info = document.getElementById('gLockedInfo');
+  info.classList.remove('hidden');
+  info.innerHTML = g.connected
+    ? `<p class="hint" style="margin:0">Files are delivered automatically to this Google Drive account. This is fixed for your installation.</p>
+       <div class="frow" style="margin-top:12px"><label>Account</label><div style="font-weight:600">${g.email||'(connected)'}</div></div>
+       <div class="frow"><label>Destination folder</label><div style="font-weight:600">${g.folderId? g.folderId : 'My Drive (root)'}</div></div>
+       <div class="connstat ok" style="margin-top:4px">✓ connected &amp; ready</div>`
+    : `<div class="connstat bad">⚠ The fixed Google account isn't connected yet. Please contact your administrator to complete setup.</div>`;
+  document.getElementById('connModal').classList.remove('hidden');
+}
 
 async function saveTestSf(){
   const stat=document.getElementById('sfConnStat'); stat.textContent='Saving…'; stat.className='connstat';

@@ -83,6 +83,19 @@ foreach ($f in @(
 # runtime launcher, renamed to a user-friendly name
 Copy-Item (Join-Path $installer 'launcher.bat') (Join-Path $payload 'start-connector.bat') -Force
 
+# optional per-client lockdown profile (committed, no secrets)
+$clientJson = Join-Path $repo 'client.json'
+if (Test-Path $clientJson) {
+    Copy-Item $clientJson (Join-Path $payload 'client.json') -Force
+    Write-Host "Included client.json -> locked client build ($((Get-Content $clientJson -Raw | ConvertFrom-Json).name))" -ForegroundColor Yellow
+}
+# optional baked connection secrets (git-ignored; e.g. a pre-connected Google account)
+$bakedConn = Join-Path $installer 'client-secrets\connections.json'
+if (Test-Path $bakedConn) {
+    Copy-Item $bakedConn (Join-Path $payload 'connections.json') -Force
+    Write-Host 'Included baked connections.json -> pre-connected build' -ForegroundColor Yellow
+}
+
 # --- 3. production node_modules -------------------------------------------------
 Step 'Installing production node_modules into payload'
 Copy-Item (Join-Path $repo 'package.json')      (Join-Path $payload 'package.json') -Force

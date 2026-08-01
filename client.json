@@ -1,0 +1,7 @@
+{
+  "name": "Morde Food Package",
+  "locked": true,
+  "destination": "googledrive",
+  "hideSalesforce": true,
+  "lockGoogle": true
+}
