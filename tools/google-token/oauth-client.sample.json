@@ -1,0 +1,5 @@
+{
+  "clientId": "PASTE-YOUR-DESKTOP-OAUTH-CLIENT-ID.apps.googleusercontent.com",
+  "clientSecret": "PASTE-YOUR-DESKTOP-OAUTH-CLIENT-SECRET",
+  "folderId": "OPTIONAL - Drive folder URL or ID; leave blank for My Drive root"
+}
