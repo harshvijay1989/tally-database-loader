@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import child_process from 'node:child_process';
 import { URL } from 'node:url';
+import * as tallyLive from './tallyLive.mjs';
 
 // Local web UI for the Tally connector (mapping designer + sync engine).
 //
@@ -126,6 +127,57 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     return new Promise((resolve) => { let d = ''; req.on('data', c => d += c); req.on('end', () => resolve(d)); });
 }
 
+// bounded-concurrency map (keeps Tally probes from running one-at-a-time or all-at-once)
+async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let i = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx]); }
+    });
+    await Promise.all(workers);
+    return out;
+}
+
+// --- Tally live config + object catalog -------------------------------------
+
+interface TallyRuntime { server: string; port: number; company: string; fromDate: string; toDate: string; }
+function loadTallyConfig(): TallyRuntime {
+    try {
+        const c = JSON.parse(fs.readFileSync('./config.json', 'utf8')).tally || {};
+        return { server: c.server || 'localhost', port: Number(c.port) || 9000, company: c.company || '', fromDate: c.fromdate || '', toDate: c.todate || '' };
+    } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '' }; }
+}
+
+interface CatalogEntry { table: string; tallyType: string; staticFields: string[]; isMaster: boolean; }
+function loadCatalog(): Record<string, CatalogEntry> {
+    const out: Record<string, CatalogEntry> = {};
+    try {
+        const cfg = JSON.parse(fs.readFileSync('./tally-export-config.json', 'utf8'));
+        for (const t of (cfg.tables || [])) {
+            out[t.name] = {
+                table: t.name,
+                tallyType: (t.collectionPaths && t.collectionPaths[0]) || '',
+                // friendly output-column names — these match the static extractor's JSON keys
+                staticFields: (t.fields || []).map((f: any) => f.name),
+                isMaster: !!t.isMaster
+            };
+        }
+    } catch { /* ignore */ }
+    return out;
+}
+
+// Only pass a date window for voucher-type collections, and only when it is a real
+// YYYYMMDD value (config often holds 'auto', which Tally would reject).
+function liveDateOpts(tc: TallyRuntime, tallyType: string): tallyLive.LiveFetchOptions {
+    const opts: tallyLive.LiveFetchOptions = {};
+    if (tc.company) opts.company = tc.company;
+    if (/voucher/i.test(tallyType)) {
+        if (/^\d{8}$/.test(tc.fromDate)) opts.fromDate = tc.fromDate;
+        if (/^\d{8}$/.test(tc.toDate)) opts.toDate = tc.toDate;
+    }
+    return opts;
+}
+
 // --- Run engine: extract Tally -> filter -> map -> destination ---------------
 
 function extractTallyToJson(): Promise<void> {
@@ -224,7 +276,9 @@ function orderMappings(oms: any[]): any[] {
 
 type EmitFn = (ev: any) => void;
 
-async function runSalesforce(mapping: any, emit: EmitFn): Promise<void> {
+type RowSource = (table: string) => Promise<any[]>;
+
+async function runSalesforce(mapping: any, emit: EmitFn, getRows: RowSource): Promise<void> {
     const auth = await sfAuth();
     if (!auth) throw new Error('Salesforce not connected — configure it in Connections');
     const oms = orderMappings(mapping.objectMappings || []).filter((o: any) => o.targetObject && o.externalIdField);
@@ -234,7 +288,7 @@ async function runSalesforce(mapping: any, emit: EmitFn): Promise<void> {
 
     for (const om of oms) {
         emit({ type: 'progress', targetObject: om.targetObject });
-        let rows = readSource(om.sourceObject);
+        let rows = await getRows(om.sourceObject);
         if (!rows.length) { emit({ type: 'object', sourceObject: om.sourceObject, targetObject: om.targetObject, total: 0, success: 0, failed: 0, errors: [`source ${om.sourceObject} produced no data`] }); continue; }
         if (om.filter && om.filter.field) rows = rows.filter((r: any) => matchFilter(r[om.filter.field], om.filter.operator, om.filter.value));
 
@@ -277,7 +331,7 @@ async function runSalesforce(mapping: any, emit: EmitFn): Promise<void> {
     emit({ type: 'done' });
 }
 
-async function runGoogleDrive(mapping: any, emit: EmitFn): Promise<void> {
+async function runGoogleDrive(mapping: any, emit: EmitFn, getRows: RowSource): Promise<void> {
     const token = await googleToken();
     if (!token) throw new Error('Google not connected — configure it in Connections');
     const folderId = loadConn().google.folderId || '';
@@ -287,7 +341,7 @@ async function runGoogleDrive(mapping: any, emit: EmitFn): Promise<void> {
     for (const om of oms) {
         const outName = om.targetObject || om.sourceObject;
         emit({ type: 'progress', targetObject: outName });
-        let rows = readSource(om.sourceObject);
+        let rows = await getRows(om.sourceObject);
         if (om.filter && om.filter.field) rows = rows.filter((r: any) => matchFilter(r[om.filter.field], om.filter.operator, om.filter.value));
         const csv = toCsv(om.fields || [], rows);
         const fname = String(outName).replace(/[^a-z0-9_-]+/gi, '_') + '.csv';
@@ -305,10 +359,32 @@ async function runMapping(name: string, emit: EmitFn): Promise<void> {
     const mapFile = `${MAP_DIR}/${mapSlug(name)}.json`;
     if (!fs.existsSync(mapFile)) throw new Error('no mapping saved yet — save one first');
     const mapping = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
-    emit({ type: 'extract' });
-    await extractTallyToJson();
-    if ((mapping.destination || 'salesforce') === 'googledrive') return runGoogleDrive(mapping, emit);
-    return runSalesforce(mapping, emit);
+
+    const tc = loadTallyConfig();
+    const catalog = loadCatalog();
+    const live = await tallyLive.reachable(tc.server, tc.port);
+    emit({ type: 'extract', live });
+    if (!live) await extractTallyToJson(); // static path: produce ./csv/<table>.json first
+
+    // Source rows come live from Tally (FETCH *) when reachable, else from the
+    // static extractor output. Cached per table so each object is fetched once.
+    const cache = new Map<string, any[]>();
+    const getRows: RowSource = async (table: string) => {
+        if (cache.has(table)) return cache.get(table)!;
+        let rows: any[];
+        const cat = catalog[table];
+        if (live && cat && cat.tallyType) {
+            const r = await tallyLive.fetchObject(tc.server, tc.port, cat.tallyType, liveDateOpts(tc, cat.tallyType));
+            rows = r.rows;
+        } else {
+            rows = readSource(table);
+        }
+        cache.set(table, rows);
+        return rows;
+    };
+
+    if ((mapping.destination || 'salesforce') === 'googledrive') return runGoogleDrive(mapping, emit, getRows);
+    return runSalesforce(mapping, emit, getRows);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -404,6 +480,37 @@ const server = http.createServer(async (req, res) => {
                 fields: (t.fields || []).map((f: any) => ({ name: f.name, datatype: f.datatype, source: f.source }))
             }));
             return json(200, { tables });
+        }
+
+        // live "fetch everything": all fields for one object, or the static list if Tally is offline
+        if (url.pathname === '/api/tally/fields') {
+            const table = url.searchParams.get('table') || '';
+            const cat = loadCatalog()[table];
+            if (!cat) return json(404, { error: 'unknown table' });
+            const tc = loadTallyConfig();
+            try {
+                if (!(await tallyLive.reachable(tc.server, tc.port))) throw new Error('offline');
+                const r = await tallyLive.fetchObject(tc.server, tc.port, cat.tallyType, liveDateOpts(tc, cat.tallyType));
+                if (!r.fields.length) throw new Error('no fields returned');
+                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, count: r.rows.length });
+            } catch {
+                return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
+            }
+        }
+
+        // session-only object discovery: which known objects actually have data in the company
+        if (url.pathname === '/api/tally/objects/refresh') {
+            const tc = loadTallyConfig();
+            if (!(await tallyLive.reachable(tc.server, tc.port))) return json(200, { reachable: false, objects: [] });
+            const cat = loadCatalog();
+            const entries = Object.values(cat);
+            // probe in parallel (bounded) so ~30 objects don't run one-at-a-time
+            const objects = await mapLimit(entries, 6, async (e) => {
+                if (!e.tallyType) return { table: e.table, present: false, count: 0 };
+                const p = await tallyLive.probePresence(tc.server, tc.port, e.tallyType, liveDateOpts(tc, e.tallyType));
+                return { table: e.table, present: p.present, count: p.count };
+            });
+            return json(200, { reachable: true, objects });
         }
 
         // --- Salesforce target discovery (live) ---
