@@ -395,6 +395,26 @@ async function loadFields(table){
 }
 function curFieldNames(){ const t=curTable(); if(!t) return []; const c=fieldCache[t.name]; return c ? c.fields : (t.fields||[]).map(f=>f.name); }
 
+// Source dropdowns can list hundreds of live fields. Rendering every option in
+// every row is O(rows × fields) DOM and freezes the page (e.g. 554×554). So each
+// select starts with just its selected option and is filled on first focus/click.
+function escA(s){ return String(s).replace(/"/g,'&quot;'); }
+function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function srcInitialOption(selVal, emptyLabel){
+  if(selVal==='__const__') return '<option value="__const__" selected>＝ constant value…</option>';
+  if(selVal && selVal.startsWith('src:')){ const n=selVal.slice(4); return `<option value="${escA(selVal)}" selected>${escH(n)}</option>`; }
+  return `<option value="" selected>${emptyLabel}</option>`;
+}
+function fillSrcOptions(sel){
+  if(sel.dataset.filled) return;
+  const val = sel.value;
+  const empty = sel.classList.contains('srcsel') ? '— not mapped —' : '— choose source —';
+  sel.innerHTML = `<option value="">${empty}</option><option value="__const__">＝ constant value…</option>`
+    + curFieldNames().map(n=>`<option value="src:${escA(n)}">${escH(n)}</option>`).join('');
+  sel.value = val;
+  sel.dataset.filled = '1';
+}
+
 // Session-only object discovery: ask Tally which known objects have data, annotate
 // the source dropdown with counts, and re-fetch the current object's fields live.
 async function refreshObjects(){
@@ -463,7 +483,6 @@ function buildMapRows(){
   if(!t || !m.targetObject || !targets.length){ document.getElementById('mapRows').innerHTML = '<div class="maphint"><div class="big">🔗</div>Choose a Salesforce object to map fields.</div>'; return; }
   const savedByTarget = Object.fromEntries((m.fields||[]).map(f=>[f.target,f]));
   const names = curFieldNames();
-  const srcOpts = names.map(n=>`<option value="src:${n}">${n}</option>`).join('');
   document.getElementById('mapRows').innerHTML = targets.map(tf=>{
     const saved = savedByTarget[tf.name];
     const guess = names.find(n=>n.toLowerCase()===tf.name.toLowerCase().replace(/__c$/,''));
@@ -472,11 +491,10 @@ function buildMapRows(){
     else if(guess) selVal='src:'+guess;
     const xf = (saved && saved.transform) ? saved.transform : 'none';
     const isSrc = selVal.startsWith('src:');
-    const opts = `<option value="">— not mapped —</option><option value="__const__">＝ constant value…</option>${srcOpts}`
-      .replace(`value="${selVal}"`, `value="${selVal}" selected`);
+    const opts = srcInitialOption(selVal, '— not mapped —');
     return `<div class="maprow${tf.required?' req':''}" data-name="${(tf.label+' '+tf.name).toLowerCase()}">
       <div class="src">
-        <select class="srcsel" onchange="onSrcChange(this)" data-target="${tf.name}">${opts}</select>
+        <select class="srcsel" onchange="onSrcChange(this)" onmousedown="fillSrcOptions(this)" onfocus="fillSrcOptions(this)" data-target="${tf.name}">${opts}</select>
         <select class="xform${isSrc?'':' hidden'}">${xformOptions(xf)}</select>
         <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${constVal.replace(/"/g,'&quot;')}">
       </div>
@@ -493,17 +511,15 @@ function onSrcChange(sel){
 
 // ---- Google Drive CSV column mapping ----
 function exportRowHtml(col){
-  const srcOpts = curFieldNames().map(n=>`<option value="src:${n}">${n}</option>`).join('');
   let selVal='', constVal='';
   if(col){ if('constant' in col){ selVal='__const__'; constVal=col.constant; } else selVal='src:'+col.source; }
   const isSrc = selVal.startsWith('src:');
-  const opts = `<option value="">— choose source —</option><option value="__const__">＝ constant value…</option>${srcOpts}`
-    .replace(`value="${selVal}"`, `value="${selVal}" selected`);
+  const opts = srcInitialOption(selVal, '— choose source —');
   const xf = col && col.transform ? col.transform : 'none';
   const colName = col ? (col.target||'') : '';
   return `<div class="maprow" data-name="${(colName||'').toLowerCase()}">
     <div class="src">
-      <select class="dsrc" onchange="onSrcChange(this)">${opts}</select>
+      <select class="dsrc" onchange="onSrcChange(this)" onmousedown="fillSrcOptions(this)" onfocus="fillSrcOptions(this)">${opts}</select>
       <select class="xform${isSrc?'':' hidden'}">${xformOptions(xf)}</select>
       <input class="constinput${selVal==='__const__'?'':' hidden'}" placeholder="constant value" value="${(constVal+'').replace(/"/g,'&quot;')}">
     </div>
