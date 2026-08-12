@@ -201,7 +201,20 @@
 <div id="connModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
   <div class="modal-card">
     <h3>Connections</h3>
-    <p class="sub">Configure where your Tally data goes. Stored locally on this machine only.</p>
+    <p class="sub">Configure where your Tally data comes from and where it goes. Stored locally on this machine only.</p>
+
+    <div class="connsec">
+      <h4><span class="chip tally">Tally</span> Source connection</h4>
+      <p class="hint">Where Tally Prime runs. Keep <b>localhost</b> if Tally is on this PC; enter the server's IP/hostname if it's on another machine. The port must match Tally's HTTP gateway (default 9000).</p>
+      <div style="display:flex;gap:12px">
+        <div class="frow" style="flex:1"><label>Server address</label><input id="tlServer" placeholder="localhost"></div>
+        <div class="frow" style="max-width:120px"><label>Port</label><input id="tlPort" placeholder="9000"></div>
+      </div>
+      <div class="connfoot">
+        <button onclick="saveTestTally()" style="background:var(--tally)">Save &amp; test</button>
+        <span id="tlConnStat" class="connstat"></span>
+      </div>
+    </div>
 
     <div class="connsec">
       <h4><span class="chip sf">Salesforce</span> Connected App credentials</h4>
@@ -226,6 +239,19 @@
         <button class="ghost" onclick="saveGoogle()">Save</button>
         <button onclick="connectGoogle()" style="background:var(--gdrive)">Connect Google</button>
         <span id="gConnStat" class="connstat"></span>
+      </div>
+    </div>
+
+    <div class="connsec">
+      <h4><span class="chip" style="color:var(--accent);background:#eef2ff">Connector</span> Web UI &amp; access</h4>
+      <p class="hint">Where this app's screen is served. Change the port if 3000 is in use. By default the screen is only reachable from this PC. Changes take effect after you restart the connector.</p>
+      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+        <div class="frow" style="max-width:140px"><label>Web UI port</label><input id="uiPort" placeholder="3000"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:11px"><input type="checkbox" id="uiExpose" style="width:auto"> Allow access from other computers on the network</label>
+      </div>
+      <div class="connfoot">
+        <button class="ghost" onclick="saveConnector()">Save</button>
+        <span id="uiConnStat" class="connstat"></span>
       </div>
     </div>
 
@@ -317,9 +343,35 @@ async function openConnections(){
   document.getElementById('sfConnStat').textContent = sess.salesforce.connected ? '✓ connected' : '';
   document.getElementById('sfConnStat').className = 'connstat'+(sess.salesforce.connected?' ok':'');
   setGoogleStat(c.google.connected, sess.google.email);
+  try{ const tc = await (await fetch('/api/tally/config')).json(); document.getElementById('tlServer').value = tc.server||''; document.getElementById('tlPort').value = tc.port||''; }catch(e){}
+  document.getElementById('tlConnStat').textContent='';
+  try{ const uc = await (await fetch('/api/connector/config')).json(); document.getElementById('uiPort').value = uc.port||3000; document.getElementById('uiExpose').checked = !!uc.exposeNetwork; }catch(e){}
+  document.getElementById('uiConnStat').textContent='';
   document.getElementById('connModal').classList.remove('hidden');
 }
 function setGoogleStat(on, email){ const s=document.getElementById('gConnStat'); s.textContent = on ? ('✓ connected'+(email?' · '+email:'')) : ''; s.className='connstat'+(on?' ok':''); }
+
+async function saveTestTally(){
+  const stat=document.getElementById('tlConnStat'); stat.textContent='Saving…'; stat.className='connstat';
+  const server=(document.getElementById('tlServer').value||'').trim()||'localhost';
+  const port=parseInt(document.getElementById('tlPort').value)||9000;
+  await fetch('/api/tally/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({server,port})});
+  stat.textContent='Testing…';
+  const r = await (await fetch('/api/tally/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({server,port})})).json();
+  if(r.reachable){
+    const co = (r.companies&&r.companies.length)? ' · '+r.companies.join(', ') : (r.warning? ' · '+r.warning : '');
+    stat.textContent='✓ connected'+co; stat.className='connstat ok';
+    for(const k in fieldCache) delete fieldCache[k]; // new source -> re-fetch fields
+  } else { stat.textContent='✕ '+(r.error||'not reachable'); stat.className='connstat bad'; }
+}
+async function saveConnector(){
+  const stat=document.getElementById('uiConnStat'); stat.textContent='Saving…'; stat.className='connstat';
+  const port=parseInt(document.getElementById('uiPort').value)||3000;
+  const exposeNetwork=document.getElementById('uiExpose').checked;
+  const r = await (await fetch('/api/connector/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port,exposeNetwork})})).json();
+  stat.textContent = r.needsRestart ? '✓ saved — restart the connector to apply' : '✓ saved';
+  stat.className='connstat ok';
+}
 
 async function saveTestSf(){
   const stat=document.getElementById('sfConnStat'); stat.textContent='Saving…'; stat.className='connstat';

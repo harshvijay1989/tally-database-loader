@@ -15,7 +15,24 @@ import * as tallyLive from './tallyLive.mjs';
 //
 // A mapping document targets ONE destination ('salesforce' or 'googledrive').
 
-const PORT = Number(process.env.PORT) || 3000;
+// Where the connector's own web UI is served. Configurable via config.json "ui"
+// (port + whether to allow other machines on the network to reach it). PORT env
+// still wins so tests/tools can override. Default binds to localhost only (safe).
+function loadUiConfig(): { port: number; exposeNetwork: boolean } {
+    try { const u = JSON.parse(fs.readFileSync('./config.json', 'utf8')).ui || {}; return { port: Number(u.port) || 3000, exposeNetwork: !!u.exposeNetwork }; }
+    catch { return { port: 3000, exposeNetwork: false }; }
+}
+function saveUiConfig(port: number, exposeNetwork: boolean): void {
+    let cfg: any = {};
+    try { cfg = JSON.parse(fs.readFileSync('./config.json', 'utf8')); } catch { cfg = {}; }
+    cfg.ui = cfg.ui || {};
+    cfg.ui.port = port || 3000;
+    cfg.ui.exposeNetwork = !!exposeNetwork;
+    fs.writeFileSync('./config.json', JSON.stringify(cfg, null, 4));
+}
+const _uiCfg = loadUiConfig();
+const PORT = Number(process.env.PORT) || _uiCfg.port;
+const HOST = _uiCfg.exposeNetwork ? '0.0.0.0' : '127.0.0.1';
 const MAP_DIR = './mappings';
 const CONN_FILE = './connections.json';
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/google/callback`;
@@ -136,6 +153,18 @@ function loadTallyConfig(): TallyRuntime {
         const c = JSON.parse(fs.readFileSync('./config.json', 'utf8')).tally || {};
         return { server: c.server || 'localhost', port: Number(c.port) || 9000, company: c.company || '', fromDate: c.fromdate || '', toDate: c.todate || '' };
     } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '' }; }
+}
+
+// Persist the Tally source location (server + port) into config.json, preserving
+// every other tally/database setting. Both the live client and the static
+// extractor read these, so pointing at a server just works.
+function saveTallyConfig(server: string, port: number): void {
+    let cfg: any = {};
+    try { cfg = JSON.parse(fs.readFileSync('./config.json', 'utf8')); } catch { cfg = {}; }
+    cfg.tally = cfg.tally || {};
+    cfg.tally.server = server || 'localhost';
+    cfg.tally.port = port || 9000;
+    fs.writeFileSync('./config.json', JSON.stringify(cfg, null, 4));
 }
 
 interface CatalogEntry { table: string; tallyType: string; staticFields: string[]; isMaster: boolean; }
@@ -452,6 +481,32 @@ const server = http.createServer(async (req, res) => {
         }
         if (url.pathname === '/api/google/disconnect' && req.method === 'POST') { const c = loadConn(); c.google.refreshToken = ''; saveConn(c); gCache = null; return json(200, { connected: false }); }
 
+        // --- Tally source location (server + port) ---
+        if (url.pathname === '/api/tally/config' && req.method === 'GET') {
+            const tc = loadTallyConfig();
+            return json(200, { server: tc.server, port: tc.port });
+        }
+        if (url.pathname === '/api/tally/config' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            const server = String(b.server || '').trim() || 'localhost';
+            const port = parseInt(b.port) || 9000;
+            saveTallyConfig(server, port);
+            return json(200, { saved: true, server, port });
+        }
+        // Test a Tally location (uses body server/port if given, else the saved config)
+        if (url.pathname === '/api/tally/test' && req.method === 'POST') {
+            const b = JSON.parse((await readBody(req)) || '{}');
+            const tc = loadTallyConfig();
+            const server = String(b.server || '').trim() || tc.server;
+            const port = parseInt(b.port) || tc.port;
+            if (!(await tallyLive.reachable(server, port))) return json(200, { reachable: false, error: `No response at ${server}:${port}. Check Tally is running with its HTTP server ON and the port/firewall.` });
+            try {
+                const r = await tallyLive.fetchObject(server, port, 'company', {});
+                const companies = [...new Set(r.rows.map((x: any) => String(x.name || '').split('; ')[0].trim()).filter(Boolean))];
+                return json(200, { reachable: true, companies });
+            } catch { return json(200, { reachable: true, companies: [], warning: 'Connected, but could not read the company list.' }); }
+        }
+
         // --- Tally source discovery ---
         if (url.pathname === '/api/tally/tables') {
             const cfg = JSON.parse(fs.readFileSync('./tally-export-config.json', 'utf8'));
@@ -559,6 +614,20 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
+        // --- connector web-UI settings (port + network exposure) ---
+        if (url.pathname === '/api/connector/config' && req.method === 'GET') {
+            const u = loadUiConfig();
+            return json(200, { port: u.port, exposeNetwork: u.exposeNetwork, runningPort: PORT, runningHost: HOST });
+        }
+        if (url.pathname === '/api/connector/config' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            const port = parseInt(b.port) || 3000;
+            const expose = !!b.exposeNetwork;
+            saveUiConfig(port, expose);
+            const needsRestart = (port !== PORT) || (expose !== (HOST === '0.0.0.0'));
+            return json(200, { saved: true, needsRestart });
+        }
+
         send(404, 'text/plain', 'not found');
     } catch (err: any) {
         send(500, 'text/plain', String(err?.message || err));
@@ -583,7 +652,8 @@ server.on('error', (err: any) => {
     }
 });
 
-server.listen(PORT, () => {
-    console.log(`Connector UI running at http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+    const shown = HOST === '0.0.0.0' ? `http://localhost:${PORT} (also reachable from other machines on this network)` : `http://localhost:${PORT}`;
+    console.log(`Connector UI running at ${shown}`);
     if (!process.env.NO_OPEN) child_process.exec(`start http://localhost:${PORT}`);
 });
