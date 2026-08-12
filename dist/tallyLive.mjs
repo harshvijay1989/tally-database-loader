@@ -130,16 +130,28 @@ export function parseCollection(xml, itemTag) {
     }
     return { rows, fields: fieldOrder };
 }
+// Tally's XML gateway is single-threaded — overlapping requests (concurrent probes,
+// or a retry landing on a still-busy server) can crash it. Funnel EVERY request
+// through one global queue so only one is ever in flight.
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let tallyChain = Promise.resolve();
+// Serialize AND leave a short cooldown between requests: Tally needs a moment to
+// tear down each connection, or a request landing too soon gets ECONNRESET.
+function serialize(fn) {
+    const run = tallyChain.then(fn, fn);
+    tallyChain = run.then(() => sleep(300), () => sleep(300));
+    return run;
+}
 async function fetchXmlWithRetry(server, port, xml, timeoutMs, attempts = 2) {
     let lastErr;
     for (let i = 0; i < attempts; i++) {
         try {
-            return await postTallyXml(server, port, xml, timeoutMs);
+            return await serialize(() => postTallyXml(server, port, xml, timeoutMs));
         }
         catch (e) {
             lastErr = e;
-            await new Promise(r => setTimeout(r, 500));
-        } // transient reset/timeout
+            await sleep(400);
+        } // transient reset — the retry is serialized, so it won't overlap
     }
     throw lastErr;
 }
