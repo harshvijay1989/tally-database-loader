@@ -547,7 +547,19 @@ const server = http.createServer(async (req, res) => {
                 const r = await tallyLive.fetchObject(tc.server, tc.port, cat.tallyType, liveDateOpts(tc, cat.tallyType));
                 if (!r.fields.length)
                     throw new Error('no fields returned');
-                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, count: r.rows.length });
+                // one example value per field (first non-empty across the first 50 rows)
+                const samples = {};
+                const scan = r.rows.slice(0, 50);
+                for (const f of r.fields) {
+                    for (const row of scan) {
+                        const v = row[f];
+                        if (v != null && v !== '') {
+                            samples[f] = String(v).slice(0, 80);
+                            break;
+                        }
+                    }
+                }
+                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples, count: r.rows.length });
             }
             catch {
                 return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
