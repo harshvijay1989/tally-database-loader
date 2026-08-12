@@ -462,8 +462,9 @@ function renderSourceFields(){
   const hint = isDrive() ? 'Click to add as a CSV column' : 'Fields available from this Tally object';
   document.getElementById('tallyFields').innerHTML = info.fields.map(n=>{
     const s = samples[n];
-    const sv = (s!=null && s!=='') ? `<span class="sample" title="${escA(s)}">${escH(s)}</span>` : '';
-    return `<div class="srcfield" data-field="${escA(n)}" onclick="onFieldClick(this)" title="${hint}"><span class="n">${escH(n)}</span>${sv}</div>`;
+    const has = (s!=null && s!=='');
+    const tip = has ? `e.g.  ${s}` : hint;
+    return `<div class="srcfield${has?' hassample':''}" data-field="${escA(n)}" data-sample="${has?escA(s):''}" onclick="onFieldClick(this)" title="${escA(tip)}"><span class="n">${escH(n)}</span></div>`;
   }).join('');
   markMapped();
 }
