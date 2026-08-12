@@ -15,7 +15,8 @@ if (-not $node) { throw 'node.exe not found. Install Node.js on this build machi
 Copy-Item $node (Join-Path $dir 'node.exe') -Force
 Write-Host "bundled node.exe ($(& $node --version))"
 
-$items = 'node.exe', 'bake-google-token.mjs', 'run.bat', 'README.md', 'oauth-client.sample.json' |
+# include a pre-filled oauth-client.json if present, so the zip is ready to run
+$items = 'node.exe', 'bake-google-token.mjs', 'run.bat', 'README.md', 'oauth-client.sample.json', 'oauth-client.json' |
     ForEach-Object { Join-Path $dir $_ } | Where-Object { Test-Path $_ }
 $zip = Join-Path $dir 'google-token-tool.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
