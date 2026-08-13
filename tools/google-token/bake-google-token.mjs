@@ -25,7 +25,7 @@ if (!fs.existsSync(clientFile)) {
     console.error('  Desktop OAuth client id/secret (see README.md).\n');
     process.exit(1);
 }
-const cfg = JSON.parse(fs.readFileSync(clientFile, 'utf8'));
+const cfg = JSON.parse(fs.readFileSync(clientFile, 'utf8').replace(/^﻿/, '')); // tolerate a UTF-8 BOM
 const clientId = String(cfg.clientId || cfg.client_id || '').trim();
 const clientSecret = String(cfg.clientSecret || cfg.client_secret || '').trim();
 const folderId = String(cfg.folderId || '').trim();
