@@ -264,6 +264,8 @@
 
 <div id="runModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
   <div class="modal-card"><h3 id="runTitle">Sync results</h3><div id="runResults"></div>
+    <details id="runLogWrap" class="hidden" style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--muted)">Activity log</summary>
+      <pre id="runLog" style="max-height:200px;overflow:auto;background:#0f172a;color:#cbd5e1;font-size:11.5px;padding:10px;border-radius:8px;margin:8px 0 0;white-space:pre-wrap"></pre></details>
     <div style="text-align:right;margin-top:8px"><button class="ghost" onclick="document.getElementById('runModal').classList.add('hidden')">Close</button></div></div>
 </div>
 
@@ -749,6 +751,8 @@ async function runSync(){
   const box=document.getElementById('runResults'); const title=document.getElementById('runTitle');
   title.textContent = drive?'Uploading CSVs to Google Drive…':'Syncing to Salesforce…';
   box.innerHTML='<p class="pending"><span class="spin dark"></span> Starting…</p>';
+  const logEl=document.getElementById('runLog'); logEl.textContent=''; document.getElementById('runLogWrap').classList.remove('hidden');
+  const addLog=(m,e)=>{ logEl.textContent += (e?'⚠ ':'')+m+'\n'; logEl.scrollTop=logEl.scrollHeight; };
   document.getElementById('runModal').classList.remove('hidden');
   const rows={}; let up=0, fail=0, ok=false;
   try{
@@ -768,7 +772,8 @@ async function runSync(){
         else if(ev.type==='object'){ up+=ev.success; fail+=ev.failed; const st=rows[ev.targetObject];
           if(st) st.innerHTML=`<span class="ok">✓ ${ev.success} ${drive?'row(s)':'upserted'}</span>${ev.failed?` · <span class="err">${ev.failed} failed</span>`:''} <span style="color:#94a3b8">(of ${ev.total})</span>${(ev.errors&&ev.errors.length)?`<ul>${ev.errors.map(e=>`<li>${e}</li>`).join('')}</ul>`:''}`; }
         else if(ev.type==='done'){ ok=true; }
-        else if(ev.type==='error'){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${ev.message}</p>`); }
+        else if(ev.type==='log'){ addLog(ev.message, ev.error); }
+        else if(ev.type==='error'){ addLog(ev.message, true); box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${ev.message}</p>`); }
       }
     }
   }catch(e){ box.insertAdjacentHTML('beforeend', `<p class="err">⚠ ${e}</p>`); }

@@ -157,12 +157,60 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
 
 // --- Tally live config + object catalog -------------------------------------
 
-interface TallyRuntime { server: string; port: number; company: string; fromDate: string; toDate: string; }
+interface TallyRuntime { server: string; port: number; company: string; fromDate: string; toDate: string; batchSize: number; discoverSample: number; }
 function loadTallyConfig(): TallyRuntime {
     try {
         const c = JSON.parse(fs.readFileSync('./config.json', 'utf8')).tally || {};
-        return { server: c.server || 'localhost', port: Number(c.port) || 9000, company: c.company || '', fromDate: c.fromdate || '', toDate: c.todate || '' };
-    } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '' }; }
+        return {
+            server: c.server || 'localhost', port: Number(c.port) || 9000, company: c.company || '',
+            fromDate: c.fromdate || '', toDate: c.todate || '',
+            batchSize: Number(c.batchSize) || 25,          // records per request when paging data
+            discoverSample: Number(c.discoverSample) || 0  // 0 = scan all records to find every field
+        };
+    } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '', batchSize: 25, discoverSample: 0 }; }
+}
+
+// --- append-only sync log (so users can see what failed and where) ---
+function logLine(msg: string, isError = false): void {
+    const line = `${new Date().toISOString()} ${isError ? '[ERROR]' : '[info] '} ${msg}`;
+    try { fs.appendFileSync('./sync-log.txt', line + '\n'); } catch { /* ignore */ }
+    if (isError) console.error(line); else console.log(line);
+}
+
+// --- remote live log: mirror the log to a single file in the connected Google
+// Drive, so an admin can watch runs from anywhere. Updated in place (same file id)
+// every few seconds during a run and once at the end. No-op if Google isn't set up.
+const LOG_ID_FILE = './.drive-log-id';
+let lastLogPush = 0;
+async function pushLogToDrive(force = false): Promise<void> {
+    try {
+        if (!force && Date.now() - lastLogPush < 6000) return; // throttle
+        const token = await googleToken();
+        if (!token) return;
+        lastLogPush = Date.now();
+        let content = '';
+        try { content = fs.readFileSync('./sync-log.txt', 'utf8'); } catch { }
+        if (content.length > 300000) content = content.slice(-300000); // keep it light
+        const name = 'Connector Live Log.txt';
+        let fileId = ''; try { fileId = fs.readFileSync(LOG_ID_FILE, 'utf8').trim(); } catch { }
+        if (fileId) {
+            const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
+                method: 'PATCH', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'text/plain' }, body: content
+            });
+            if (r.ok) return;
+        }
+        // create (first time, or the old file was deleted)
+        const folderId = loadConn().google.folderId || '';
+        const meta: any = { name, mimeType: 'text/plain' };
+        if (folderId) meta.parents = [folderId];
+        const boundary = 't2sflog' + Math.random().toString(36).slice(2);
+        const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`
+            + `--${boundary}\r\nContent-Type: text/plain\r\n\r\n${content}\r\n--${boundary}--`;
+        const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id', {
+            method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body
+        });
+        if (r.ok) { const d: any = await r.json(); try { fs.writeFileSync(LOG_ID_FILE, d.id); } catch { } }
+    } catch { /* never let logging break a run */ }
 }
 
 // Persist the Tally source location (server + port) into config.json, preserving
@@ -305,7 +353,18 @@ function orderMappings(oms: any[]): any[] {
 
 type EmitFn = (ev: any) => void;
 
-type RowSource = (table: string) => Promise<any[]>;
+// Which top-level Tally fields an object mapping actually needs (mapped sources +
+// filter field + relationship keys). We fetch only these — never FETCH * for data.
+function topToken(s: string): string { return String(s || '').split('.')[0]; }
+function neededTokens(om: any): string[] {
+    const t = new Set<string>();
+    for (const f of (om.fields || [])) if (!('constant' in f) && f.source) t.add(topToken(f.source));
+    if (om.filter && om.filter.field) t.add(topToken(om.filter.field));
+    for (const rel of (om.relationships || [])) if (rel.sourceKey) t.add(topToken(rel.sourceKey));
+    return [...t].filter(Boolean);
+}
+
+type RowSource = (table: string, fetchTokens: string[]) => Promise<any[]>;
 
 async function runSalesforce(mapping: any, emit: EmitFn, getRows: RowSource): Promise<void> {
     const auth = await sfAuth();
@@ -317,7 +376,7 @@ async function runSalesforce(mapping: any, emit: EmitFn, getRows: RowSource): Pr
 
     for (const om of oms) {
         emit({ type: 'progress', targetObject: om.targetObject });
-        let rows = await getRows(om.sourceObject);
+        let rows = await getRows(om.sourceObject, neededTokens(om));
         if (!rows.length) { emit({ type: 'object', sourceObject: om.sourceObject, targetObject: om.targetObject, total: 0, success: 0, failed: 0, errors: [`source ${om.sourceObject} produced no data`] }); continue; }
         if (om.filter && om.filter.field) rows = rows.filter((r: any) => matchFilter(r[om.filter.field], om.filter.operator, om.filter.value));
 
@@ -370,7 +429,7 @@ async function runGoogleDrive(mapping: any, emit: EmitFn, getRows: RowSource): P
     for (const om of oms) {
         const outName = om.targetObject || om.sourceObject;
         emit({ type: 'progress', targetObject: outName });
-        let rows = await getRows(om.sourceObject);
+        let rows = await getRows(om.sourceObject, neededTokens(om));
         if (om.filter && om.filter.field) rows = rows.filter((r: any) => matchFilter(r[om.filter.field], om.filter.operator, om.filter.value));
         const csv = toCsv(om.fields || [], rows);
         const fname = String(outName).replace(/[^a-z0-9_-]+/gi, '_') + '.csv';
@@ -392,23 +451,30 @@ async function runMapping(name: string, emit: EmitFn): Promise<void> {
     const tc = loadTallyConfig();
     const catalog = loadCatalog();
     const live = await tallyLive.reachable(tc.server, tc.port);
+    logLine(`=== run "${name}" started (destination=${mapping.destination || 'salesforce'}, tally=${tc.server}:${tc.port}, live=${live}) ===`);
     emit({ type: 'extract', live });
-    if (!live) await extractTallyToJson(); // static path: produce ./csv/<table>.json first
+    if (!live) { logLine('Tally not reachable — using the static extractor'); await extractTallyToJson(); }
 
-    // Source rows come live from Tally (FETCH *) when reachable, else from the
-    // static extractor output. Cached per table so each object is fetched once.
+    // Source rows come live from Tally in small paged batches (only the mapped
+    // columns — never FETCH *), else from the static extractor output. Cached per
+    // (table + field set) so each object is fetched once per run.
     const cache = new Map<string, any[]>();
-    const getRows: RowSource = async (table: string) => {
-        if (cache.has(table)) return cache.get(table)!;
+    const getRows: RowSource = async (table: string, fetchTokens: string[]) => {
+        const key = table + '|' + fetchTokens.slice().sort().join(',');
+        if (cache.has(key)) return cache.get(key)!;
         let rows: any[];
         const cat = catalog[table];
         if (live && cat && cat.tallyType) {
-            const r = await tallyLive.fetchObject(tc.server, tc.port, cat.tallyType, liveDateOpts(tc, cat.tallyType));
+            const fetchList = fetchTokens.length ? fetchTokens.join(',') : 'NAME';
+            const r = await tallyLive.fetchBatched(tc.server, tc.port, cat.tallyType, fetchList, {
+                ...liveDateOpts(tc, cat.tallyType), batchSize: tc.batchSize,
+                log: (m, e) => { logLine('  ' + m, e); emit({ type: 'log', message: m, error: !!e }); }
+            });
             rows = r.rows;
         } else {
             rows = readSource(table);
         }
-        cache.set(table, rows);
+        cache.set(key, rows);
         return rows;
     };
 
@@ -545,7 +611,12 @@ const server = http.createServer(async (req, res) => {
             const tc = loadTallyConfig();
             try {
                 if (!(await tallyLive.reachable(tc.server, tc.port))) throw new Error('offline');
-                const r = await tallyLive.fetchObject(tc.server, tc.port, cat.tallyType, liveDateOpts(tc, cat.tallyType));
+                // discover ALL fields by paging FETCH * in small batches (never one giant
+                // request) so heavy objects like ledger can't crash Tally.
+                const r = await tallyLive.fetchBatched(tc.server, tc.port, cat.tallyType, '*', {
+                    ...liveDateOpts(tc, cat.tallyType), batchSize: 10, sampleCap: tc.discoverSample,
+                    log: (m, e) => logLine('[discover] ' + m, e)
+                });
                 if (!r.fields.length) throw new Error('no fields returned');
                 // one example value per field (first non-empty across the first 50 rows)
                 const samples: Record<string, string> = {};
@@ -554,7 +625,8 @@ const server = http.createServer(async (req, res) => {
                     for (const row of scan) { const v = row[f]; if (v != null && v !== '') { samples[f] = String(v).slice(0, 80); break; } }
                 }
                 return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples, count: r.rows.length });
-            } catch {
+            } catch (e: any) {
+                logLine(`[discover] ${cat.tallyType} failed, using saved fields — ${e?.message || e}`, true);
                 return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
             }
         }
@@ -630,8 +702,11 @@ const server = http.createServer(async (req, res) => {
             const body = JSON.parse((await readBody(req)) || '{}');
             res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' });
             const emit = (ev: any) => { try { res.write(JSON.stringify(ev) + '\n'); } catch { /* client gone */ } };
+            const logTimer = setInterval(() => { pushLogToDrive().catch(() => { }); }, 6000); // near-live remote log
             try { await runMapping(mapSlug(body.name || ''), emit); }
-            catch (e: any) { emit({ type: 'error', message: String(e?.message || e) }); }
+            catch (e: any) { logLine(String(e?.message || e), true); emit({ type: 'error', message: String(e?.message || e) }); }
+            clearInterval(logTimer);
+            await pushLogToDrive(true); // final flush to Drive
             res.end();
             return;
         }
