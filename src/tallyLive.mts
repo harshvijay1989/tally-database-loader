@@ -51,16 +51,35 @@ export function buildFetchXml(tallyType: string, fetchList: string, opts: LiveFe
         + '</DESC></BODY></ENVELOPE>';
 }
 
+// Reuse ONE keep-alive connection for all Tally requests. Opening a fresh socket
+// per request makes Tally's single-threaded gateway drop connections (ECONNRESET);
+// a persistent connection is both stable and much faster.
+const tallyAgent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+
+/** Build a filter expression by ledger/master Name (batched pagination). */
+export function nameFilter(names: string[]): string {
+    return names.map(n => `$Name = "${escapeHtml(n).replace(/"/g, '&quot;')}"`).join(' OR ');
+}
+
+/** buildFetchXml variant with an inline FILTER formula (for record pagination). */
+export function buildFetchXmlFiltered(tallyType: string, fetchList: string, filterFormula: string, opts: LiveFetchOptions = {}): string {
+    const base = buildFetchXml(tallyType, fetchList, opts);
+    if (!filterFormula) return base;
+    const collName = 'Live' + tallyType.replace(/[^a-zA-Z0-9]/g, '');
+    return base
+        .replace(`<FETCH>${fetchList}</FETCH></COLLECTION>`, `<FETCH>${fetchList}</FETCH><FILTER>pgflt</FILTER></COLLECTION><SYSTEM TYPE="Formula" NAME="pgflt">${filterFormula}</SYSTEM>`);
+}
+
 /** POST an XML payload to Tally using the UTF-16LE transport (same as tally.mts). */
 export function postTallyXml(server: string, port: number, msg: string, timeoutMs = 20000): Promise<string> {
     return new Promise<string>((resolve, reject) => {
         try {
             const req = http.request({
-                hostname: server, port, path: '', method: 'POST',
+                hostname: server, port, path: '', method: 'POST', agent: tallyAgent,
                 headers: {
                     'Content-Length': Buffer.byteLength(msg, 'utf16le'),
                     'Content-Type': 'text/xml;charset=utf-16',
-                    'Connection': 'close'
+                    'Connection': 'keep-alive'
                 }
             }, (res) => {
                 let data = '';
@@ -138,11 +157,12 @@ export function parseCollection(xml: string, itemTag: string): LiveFetchResult {
 // through one global queue so only one is ever in flight.
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 let tallyChain: Promise<unknown> = Promise.resolve();
-// Serialize AND leave a short cooldown between requests: Tally needs a moment to
-// tear down each connection, or a request landing too soon gets ECONNRESET.
+// Serialize so only one request is in flight. With the keep-alive connection above
+// this no longer needs a cooldown between requests (that was to let a fresh socket
+// tear down); batched pagination therefore runs fast.
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
     const run = tallyChain.then(fn, fn);
-    tallyChain = run.then(() => sleep(300), () => sleep(300));
+    tallyChain = run.then(() => undefined, () => undefined);
     return run;
 }
 
@@ -159,6 +179,66 @@ async function fetchXmlWithRetry(server: string, port: number, xml: string, time
 export async function fetchObject(server: string, port: number, tallyType: string, opts: LiveFetchOptions = {}): Promise<LiveFetchResult> {
     const xml = await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, '*', opts), 30000);
     return parseCollection(xml, tallyType);
+}
+
+export type LogFn = (msg: string, isError?: boolean) => void;
+export interface BatchedOptions extends LiveFetchOptions {
+    batchSize?: number;   // records per request
+    sampleCap?: number;   // discovery only: stop after this many records (0 = all)
+    log?: LogFn;
+}
+
+/** List record identifiers (Name) for a master object — light FETCH NAME. */
+export async function listNames(server: string, port: number, tallyType: string, opts: LiveFetchOptions = {}): Promise<string[]> {
+    const xml = await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, 'NAME', opts), 20000, 2);
+    const { rows } = parseCollection(xml, tallyType);
+    return rows.map(r => r.name).filter((n): n is string => n != null && n !== '');
+}
+
+/**
+ * Fetch an object in small Name-filtered batches over the keep-alive connection,
+ * so Tally never serializes the whole collection at once (the FETCH * crash).
+ * Returns the union of fields + all rows. Objects with no Name (e.g. vouchers)
+ * fall back to a single fetch bounded by fetchList (+ any date window in opts).
+ */
+export async function fetchBatched(server: string, port: number, tallyType: string, fetchList: string, opts: BatchedOptions = {}): Promise<LiveFetchResult> {
+    const log = opts.log || (() => { });
+    const batchSize = Math.max(1, opts.batchSize || 25);
+    let names: string[] = [];
+    try { names = await listNames(server, port, tallyType, opts); }
+    catch (e: any) { log(`${tallyType}: could not list record names — ${e?.message || e}`, true); }
+
+    if (!names.length) {
+        log(`${tallyType}: no Name identifiers; single fetch of [${fetchList}]`);
+        try {
+            const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, fetchList, opts), 60000, 1), tallyType);
+            log(`${tallyType}: fetched ${rows.length} rows, ${fields.length} fields`);
+            return { rows, fields };
+        } catch (e: any) { log(`${tallyType}: single fetch FAILED - ${e?.message || e}`, true); return { rows: [], fields: [] }; }
+    }
+
+    const cap = (opts.sampleCap && opts.sampleCap > 0) ? Math.min(opts.sampleCap, names.length) : names.length;
+    const target = names.slice(0, cap);
+    log(`${tallyType}: ${names.length} records${cap < names.length ? ` (sampling ${cap})` : ''}; batches of ${batchSize}`);
+    const allRows: Record<string, string>[] = [];
+    const fieldOrder: string[] = []; const seen = new Set<string>();
+    let batchNo = 0, failed = 0;
+    for (let i = 0; i < target.length; i += batchSize) {
+        batchNo++;
+        const batch = target.slice(i, i + batchSize);
+        try {
+            const xml = await fetchXmlWithRetry(server, port, buildFetchXmlFiltered(tallyType, fetchList, nameFilter(batch), opts), 30000, 2);
+            const { rows, fields } = parseCollection(xml, tallyType);
+            for (const f of fields) if (!seen.has(f)) { seen.add(f); fieldOrder.push(f); }
+            // each filtered request can carry one blank/default item — keep only real (named) records
+            allRows.push(...rows.filter(r => r.name != null && r.name !== ''));
+        } catch (e: any) {
+            failed += batch.length;
+            log(`${tallyType}: batch ${batchNo} (records ${i + 1}-${i + batch.length}) FAILED - ${e?.message || e}`, true);
+        }
+    }
+    log(`${tallyType}: done - ${allRows.length} rows, ${fieldOrder.length} fields${failed ? `, ${failed} records FAILED` : ''}`);
+    return { rows: allRows, fields: fieldOrder };
 }
 
 /** Cheap presence/count probe for object discovery (fetches only NAME). */
