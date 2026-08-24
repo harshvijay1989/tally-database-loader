@@ -188,10 +188,18 @@ function loadTallyConfig() {
     }
 }
 // --- append-only sync log (so users can see what failed and where) ---
+const LOG_FILE = './sync-log.txt';
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // rotate at 5 MB, keep one previous file
 function logLine(msg, isError = false) {
     const line = `${new Date().toISOString()} ${isError ? '[ERROR]' : '[info] '} ${msg}`;
     try {
-        fs.appendFileSync('./sync-log.txt', line + '\n');
+        // rotate so the log never grows without bound across months of runs
+        try {
+            if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES)
+                fs.renameSync(LOG_FILE, LOG_FILE + '.1');
+        }
+        catch { /* no file yet */ }
+        fs.appendFileSync(LOG_FILE, line + '\n');
     }
     catch { /* ignore */ }
     if (isError)
@@ -746,8 +754,10 @@ const server = http.createServer(async (req, res) => {
                 return s;
             };
             try {
-                if (!(await tallyLive.reachable(tc.server, tc.port)))
-                    throw new Error('offline');
+                if (!(await tallyLive.reachable(tc.server, tc.port))) {
+                    logLine(`[discover] Tally not reachable at ${tc.server}:${tc.port} — start Tally Prime with its HTTP server ON (port ${tc.port}); using saved fields for ${table}`, true);
+                    return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
+                }
                 const dopts = liveDateOpts(tc, cat.tallyType);
                 // Reuse a recent discovery of the SAME collection type (e.g. mst_payhead and
                 // mst_ledger are both TYPE=ledger) instead of walking it again.
@@ -775,7 +785,10 @@ const server = http.createServer(async (req, res) => {
                 return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples: buildSamples(r.fields, r.rows), count: r.got });
             }
             catch (e) {
-                logLine(`[discover] ${cat.tallyType} failed, using saved fields — ${e?.message || e}`, true);
+                logLine(`[discover] ${cat.tallyType} failed, using saved fields — ${tallyLive.describeError(e)}`, true);
+                const hint = tallyLive.tallyErrorHint(e);
+                if (hint)
+                    logLine(`[discover] hint — ${hint}`, true);
                 return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
             }
         }
@@ -862,8 +875,12 @@ const server = http.createServer(async (req, res) => {
                 await runMapping(mapSlug(body.name || ''), emit);
             }
             catch (e) {
-                logLine(String(e?.message || e), true);
-                emit({ type: 'error', message: String(e?.message || e) });
+                const detail = tallyLive.describeError(e);
+                const hint = tallyLive.tallyErrorHint(e);
+                logLine(`run failed — ${detail}`, true);
+                if (hint)
+                    logLine(`hint — ${hint}`, true);
+                emit({ type: 'error', message: hint ? `${detail} — ${hint}` : detail });
             }
             clearInterval(logTimer);
             await pushLogToDrive(true); // final flush to Drive

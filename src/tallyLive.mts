@@ -96,6 +96,34 @@ export function postTallyXml(server: string, port: number, msg: string, timeoutM
     });
 }
 
+/** Turn any thrown value into a specific, loggable string. Node network failures are
+ *  often an AggregateError (several socket attempts) whose .message is empty — the
+ *  useful detail is in .code / .errors[].code — so surface those. */
+export function describeError(e: any): string {
+    if (e == null) return 'unknown error';
+    if (Array.isArray(e.errors) && e.errors.length) {
+        const codes = [...new Set(e.errors.map((x: any) => x?.code || x?.message || String(x)))];
+        return `${e.message || 'AggregateError'} [${codes.join(', ')}]`;
+    }
+    const parts: string[] = [];
+    if (e.code) parts.push(String(e.code));
+    parts.push(e.message ? String(e.message) : String(e));
+    if (e.cause && (e.cause.code || e.cause.message)) parts.push(`cause: ${e.cause.code || e.cause.message}`);
+    return parts.join(' — ');
+}
+
+/** A plain-language, actionable hint for a Tally connection failure (or '' if none fits). */
+export function tallyErrorHint(e: any): string {
+    const s = describeError(e).toLowerCase();
+    if (s.includes('econnrefused'))
+        return 'Tally is not running, or its HTTP server is OFF. In Tally Prime: F1 → Settings → Connectivity → Client/Server configuration → set "Tally.ERP 9 is acting as" to Both, port 9000.';
+    if (s.includes('timed out') || s.includes('timeout') || s.includes('socket hang up') || s.includes('econnreset'))
+        return 'Tally accepted the connection but did not respond in time — it is busy or wedged (often after a very heavy request). Wait a moment; if it stays stuck, restart Tally Prime and reopen the company.';
+    if (s.includes('enotfound') || s.includes('ehostunreach') || s.includes('etimedout'))
+        return 'Cannot reach the Tally machine — check the server address and port in Tally settings.';
+    return '';
+}
+
 /**
  * Flatten a Tally collection XML into rows. Every nested element becomes a
  * dot-notation field (e.g. billallocations.list.name); repeated values under the
@@ -281,7 +309,7 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
                 const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
                 absorb(rows.filter(r => r.name != null && r.name !== ''), fields); // drop the blank default item
                 windows++;
-            } catch (e: any) { log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${e?.message || e}`, true); }
+            } catch (e: any) { log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${describeError(e)}`, true); }
         }
     } else {
         // AlterID windows (primary path). Boundaries chosen so each window holds ~windowSize
@@ -303,10 +331,13 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
             } catch (e: any) {
                 if (hi - lo > 1 && depth < 6) { // split the window and retry the halves
                     const mid = Math.floor((lo + hi) / 2);
-                    log(`${tallyType}: window (${lo},${hi}] failed (${e?.message || e}); splitting`, true);
+                    log(`${tallyType}: window (${lo},${hi}] failed (${describeError(e)}); splitting`, true);
                     await fetchWindow(lo, mid, depth + 1);
                     await fetchWindow(mid, hi, depth + 1);
-                } else { log(`${tallyType}: window (${lo},${hi}] FAILED - ${e?.message || e}`, true); }
+                } else {
+                    log(`${tallyType}: window (${lo},${hi}] FAILED - ${describeError(e)}`, true);
+                    const hint = tallyErrorHint(e); if (hint) log(`${tallyType}: hint — ${hint}`, true);
+                }
             }
         };
         for (const b of bounds) await fetchWindow(b.lo, b.hi);
