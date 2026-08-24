@@ -300,6 +300,11 @@ function liveDateOpts(tc, tallyType) {
     }
     return opts;
 }
+const discoverCache = new Map();
+const DISCOVER_TTL_MS = 15 * 60 * 1000; // 15 min — long enough to map then export
+function discoverKey(tallyType, opts) {
+    return [tallyType, opts.company || '', opts.fromDate || '', opts.toDate || ''].join('|');
+}
 // --- Run engine: extract Tally -> filter -> map -> destination ---------------
 function extractTallyToJson() {
     return new Promise((resolve, reject) => {
@@ -524,28 +529,39 @@ async function runMapping(name, emit) {
         logLine('Tally not reachable — using the static extractor');
         await extractTallyToJson();
     }
-    // Source rows come live from Tally in small paged batches (only the mapped
-    // columns — never FETCH *), else from the static extractor output. Cached per
-    // (table + field set) so each object is fetched once per run.
+    // Source rows: reuse what discovery already pulled (all rows, all fields) so we
+    // don't hit Tally twice; the mapping then projects just the mapped columns. On a
+    // cache miss (e.g. running a saved mapping without discovering first) do the same
+    // safe windowed FETCH * — never a bare FETCH *. Falls back to the static extractor
+    // output when Tally is offline. Cached per table so each object is fetched once.
     const cache = new Map();
-    const getRows = async (table, fetchTokens) => {
-        const key = table + '|' + fetchTokens.slice().sort().join(',');
-        if (cache.has(key))
-            return cache.get(key);
+    const getRows = async (table, _fetchTokens) => {
+        if (cache.has(table))
+            return cache.get(table);
         let rows;
         const cat = catalog[table];
         if (live && cat && cat.tallyType) {
-            const fetchList = fetchTokens.length ? fetchTokens.join(',') : 'NAME';
-            const r = await tallyLive.fetchBatched(tc.server, tc.port, cat.tallyType, fetchList, {
-                ...liveDateOpts(tc, cat.tallyType), batchSize: tc.batchSize,
-                log: (m, e) => { logLine('  ' + m, e); emit({ type: 'log', message: m, error: !!e }); }
-            });
-            rows = r.rows;
+            const dopts = liveDateOpts(tc, cat.tallyType);
+            const ckey = discoverKey(cat.tallyType, dopts);
+            const hit = discoverCache.get(ckey);
+            if (hit && Date.now() - hit.ts < DISCOVER_TTL_MS) {
+                logLine(`  reusing discovered data for ${table} (${hit.rows.length} rows, all fields)`);
+                rows = hit.rows;
+            }
+            else {
+                // no fresh discovery — walk the whole object safely (windowed FETCH *)
+                const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
+                    ...dopts,
+                    log: (m, e) => { logLine('  ' + m, e); emit({ type: 'log', message: m, error: !!e }); }
+                });
+                rows = r.rows;
+                discoverCache.set(ckey, { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete });
+            }
         }
         else {
             rows = readSource(table);
         }
-        cache.set(key, rows);
+        cache.set(table, rows);
         return rows;
     };
     if ((mapping.destination || 'salesforce') === 'googledrive')
@@ -708,30 +724,55 @@ const server = http.createServer(async (req, res) => {
             if (!cat)
                 return json(404, { error: 'unknown table' });
             const tc = loadTallyConfig();
+            // Nested child tables (dotted collection path, e.g. voucher.allledgerentries)
+            // are not standalone Tally collections — their fields come back as `.list.`
+            // columns on the parent object. Don't query Tally; serve the saved list.
+            if (!cat.tallyType || cat.tallyType.includes('.')) {
+                logLine(`[discover] ${table}: nested/child table — its fields come from the parent object; using saved fields`);
+                return json(200, { source: 'static', tallyType: cat.tallyType, fields: cat.staticFields, count: null });
+            }
+            // one example value per field (first non-empty across the first 50 rows)
+            const buildSamples = (fields, rows) => {
+                const s = {};
+                const scan = rows.slice(0, 50);
+                for (const f of fields)
+                    for (const row of scan) {
+                        const v = row[f];
+                        if (v != null && v !== '') {
+                            s[f] = String(v).slice(0, 80);
+                            break;
+                        }
+                    }
+                return s;
+            };
             try {
                 if (!(await tallyLive.reachable(tc.server, tc.port)))
                     throw new Error('offline');
-                // discover ALL fields by paging FETCH * in small batches (never one giant
-                // request) so heavy objects like ledger can't crash Tally.
-                const r = await tallyLive.fetchBatched(tc.server, tc.port, cat.tallyType, '*', {
-                    ...liveDateOpts(tc, cat.tallyType), batchSize: 10, sampleCap: tc.discoverSample,
+                const dopts = liveDateOpts(tc, cat.tallyType);
+                // Reuse a recent discovery of the SAME collection type (e.g. mst_payhead and
+                // mst_ledger are both TYPE=ledger) instead of walking it again.
+                const hit = discoverCache.get(discoverKey(cat.tallyType, dopts));
+                if (hit && Date.now() - hit.ts < DISCOVER_TTL_MS) {
+                    logLine(`[discover] ${table}: reusing cached ${cat.tallyType} (${hit.rows.length} rows, ${hit.fields.length} fields)`);
+                    return json(200, { source: 'live', tallyType: cat.tallyType, fields: hit.fields, samples: buildSamples(hit.fields, hit.rows), count: hit.rows.length });
+                }
+                // Complete, safe discovery: walk the WHOLE collection in bounded AlterID
+                // windows (FETCH * per small window) and union every field. Never a bare
+                // FETCH * over the whole collection (that rebuilds every record's nested
+                // trees and wedges Tally). Walking every record is required for a complete
+                // picker — a field exists only if some record populates it — so this is the
+                // only way to be SURE the matching UI shows every field.
+                const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
+                    ...dopts, windowSize: tc.discoverSample && tc.discoverSample >= 50 ? tc.discoverSample : 500,
                     log: (m, e) => logLine('[discover] ' + m, e)
                 });
                 if (!r.fields.length)
                     throw new Error('no fields returned');
-                // one example value per field (first non-empty across the first 50 rows)
-                const samples = {};
-                const scan = r.rows.slice(0, 50);
-                for (const f of r.fields) {
-                    for (const row of scan) {
-                        const v = row[f];
-                        if (v != null && v !== '') {
-                            samples[f] = String(v).slice(0, 80);
-                            break;
-                        }
-                    }
-                }
-                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples, count: r.rows.length });
+                if (!r.complete)
+                    logLine(`[discover] warning: ${cat.tallyType} returned ${r.got}/${r.expected} records — field list may be partial`, true);
+                // keep the full rows so export (and same-type discovery) reuse them
+                discoverCache.set(discoverKey(cat.tallyType, dopts), { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete });
+                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples: buildSamples(r.fields, r.rows), count: r.got });
             }
             catch (e) {
                 logLine(`[discover] ${cat.tallyType} failed, using saved fields — ${e?.message || e}`, true);

@@ -183,62 +183,141 @@ export async function fetchObject(server: string, port: number, tallyType: strin
 
 export type LogFn = (msg: string, isError?: boolean) => void;
 export interface BatchedOptions extends LiveFetchOptions {
-    batchSize?: number;   // records per request
-    sampleCap?: number;   // discovery only: stop after this many records (0 = all)
+    windowSize?: number;  // fetchAllWindowed: target records per AlterID window (default 500)
     log?: LogFn;
 }
 
-/** List record identifiers (Name) for a master object — light FETCH NAME. */
-export async function listNames(server: string, port: number, tallyType: string, opts: LiveFetchOptions = {}): Promise<string[]> {
-    const xml = await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, 'NAME', opts), 20000, 2);
-    const { rows } = parseCollection(xml, tallyType);
-    return rows.map(r => r.name).filter((n): n is string => n != null && n !== '');
+/** Result of a windowed full-field fetch, with a completeness self-check. */
+export interface WindowedResult extends LiveFetchResult {
+    expected: number;  // record count from the cheap NAME/ALTERID pass
+    got: number;       // records actually returned across all windows
+    complete: boolean; // got >= expected (no window silently dropped records)
+    windows: number;   // number of AlterID windows walked
+}
+
+/** Export path: ONE collection request for only the given (bounded) fields across
+ *  all records — the approach the original loader uses on large companies. Never
+ *  FETCH *; the field set is limited to the mapped columns. */
+export async function fetchCollectionFields(server: string, port: number, tallyType: string, fetchList: string, opts: BatchedOptions = {}): Promise<LiveFetchResult> {
+    const log = opts.log || (() => { });
+    log(`${tallyType}: fetching [${fetchList}] for all records`);
+    try {
+        const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, fetchList || 'NAME', opts), 120000, 2), tallyType);
+        const clean = rows.filter(r => Object.keys(r).length);
+        log(`${tallyType}: fetched ${clean.length} rows, ${fields.length} fields`);
+        return { rows: clean, fields };
+    } catch (e: any) { log(`${tallyType}: fetch failed - ${e?.message || e}`, true); return { rows: [], fields: [] }; }
+}
+
+/** Build an AlterID range filter. Operators MUST be XML-escaped (&gt;/&lt;) — a bare
+ *  '<' breaks the <SYSTEM> formula element and silently returns nothing (or wedges Tally). */
+export function alterIdRangeFilter(lo: number, hi: number): string {
+    return `$AlterID &gt; ${lo} AND $AlterID &lt;= ${hi}`;
 }
 
 /**
- * Fetch an object in small Name-filtered batches over the keep-alive connection,
- * so Tally never serializes the whole collection at once (the FETCH * crash).
- * Returns the union of fields + all rows. Objects with no Name (e.g. vouchers)
- * fall back to a single fetch bounded by fetchList (+ any date window in opts).
+ * Fetch EVERY field of EVERY record of an object type without ever crashing Tally.
+ *
+ * A bare FETCH * over a whole collection makes Tally rebuild every record's nested
+ * trees in one request and wedges on large companies. Instead we:
+ *   1. do one cheap bounded pass (NAME + ALTERID) to get the record count + AlterID of
+ *      every record — AlterID is present on every Tally object (master and voucher);
+ *   2. slice the sorted AlterIDs into windows of ~windowSize records and FETCH * each
+ *      window bounded by `$AlterID > lo AND $AlterID <= hi` — a small, safe request;
+ *   3. concatenate the windows (disjoint by AlterID, so no record appears twice) and
+ *      union their field names — discovery is a byproduct, so the field set is complete
+ *      by construction (all scalars + all nested `.list.` fields, the full FETCH * set);
+ *   4. self-check: compare rows returned against the count from step 1.
+ *
+ * If a window request fails (timeout/transient), it is split in half and retried, so a
+ * pathologically heavy slice degrades to smaller requests rather than crashing.
  */
-export async function fetchBatched(server: string, port: number, tallyType: string, fetchList: string, opts: BatchedOptions = {}): Promise<LiveFetchResult> {
+export async function fetchAllWindowed(server: string, port: number, tallyType: string, opts: BatchedOptions = {}): Promise<WindowedResult> {
     const log = opts.log || (() => { });
-    const batchSize = Math.max(1, opts.batchSize || 25);
-    let names: string[] = [];
-    try { names = await listNames(server, port, tallyType, opts); }
-    catch (e: any) { log(`${tallyType}: could not list record names — ${e?.message || e}`, true); }
+    const t0 = Date.now();
+    const secs = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
+    const windowSize = Math.max(1, opts.windowSize || 500);
 
-    if (!names.length) {
-        log(`${tallyType}: no Name identifiers; single fetch of [${fetchList}]`);
-        try {
-            const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, fetchList, opts), 60000, 1), tallyType);
-            log(`${tallyType}: fetched ${rows.length} rows, ${fields.length} fields`);
-            return { rows, fields };
-        } catch (e: any) { log(`${tallyType}: single fetch FAILED - ${e?.message || e}`, true); return { rows: [], fields: [] }; }
+    // Nested sub-collection paths (e.g. "voucher.allledgerentries", "stockitem.gstdetails.
+    // statewisedetails.ratedetails") are NOT standalone Tally collection types — sending
+    // one as a <TYPE> wedges the gateway. Their data already comes back as `.list.` columns
+    // on the PARENT object's windowed FETCH *, so never query them directly.
+    if (tallyType.includes('.')) {
+        log(`${tallyType}: nested sub-collection path — not a standalone collection; its fields come from the parent object, skipping`, true);
+        return { rows: [], fields: [], expected: 0, got: 0, complete: false, windows: 0 };
     }
 
-    const cap = (opts.sampleCap && opts.sampleCap > 0) ? Math.min(opts.sampleCap, names.length) : names.length;
-    const target = names.slice(0, cap);
-    log(`${tallyType}: ${names.length} records${cap < names.length ? ` (sampling ${cap})` : ''}; batches of ${batchSize}`);
-    const allRows: Record<string, string>[] = [];
+    // 1) cheap bounded pass: one row per record with its Name + AlterID (no FETCH *, safe)
+    const idPass = parseCollection(
+        await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, 'NAME,ALTERID', opts), 60000, 2), tallyType);
+    const idRows = idPass.rows.filter(r => Object.keys(r).length);
+    const expected = idRows.length;
+    if (!expected) { log(`${tallyType}: no records`); return { rows: [], fields: [], expected: 0, got: 0, complete: true, windows: 0 }; }
+    const ids = idRows.map(r => parseInt(r.alterid || '0', 10)).filter(n => n > 0).sort((a, b) => a - b);
+
+    // shared accumulators (union field names in first-seen order; concatenate rows)
     const fieldOrder: string[] = []; const seen = new Set<string>();
-    let batchNo = 0, failed = 0;
-    for (let i = 0; i < target.length; i += batchSize) {
-        batchNo++;
-        const batch = target.slice(i, i + batchSize);
-        try {
-            const xml = await fetchXmlWithRetry(server, port, buildFetchXmlFiltered(tallyType, fetchList, nameFilter(batch), opts), 30000, 2);
-            const { rows, fields } = parseCollection(xml, tallyType);
-            for (const f of fields) if (!seen.has(f)) { seen.add(f); fieldOrder.push(f); }
-            // each filtered request can carry one blank/default item — keep only real (named) records
-            allRows.push(...rows.filter(r => r.name != null && r.name !== ''));
-        } catch (e: any) {
-            failed += batch.length;
-            log(`${tallyType}: batch ${batchNo} (records ${i + 1}-${i + batch.length}) FAILED - ${e?.message || e}`, true);
+    const allRows: Record<string, string>[] = [];
+    const absorb = (rows: Record<string, string>[], fields: string[]) => {
+        for (const f of fields) if (!seen.has(f)) { seen.add(f); fieldOrder.push(f); }
+        allRows.push(...rows);
+    };
+    let windows = 0;
+
+    if (!ids.length) {
+        // Some config masters (e.g. cost centres) carry no AlterID. Fall back to
+        // NAME-filtered batches using the names we already listed — still bounded,
+        // still safe (never a bare FETCH * over the whole collection).
+        const names = idRows.map(r => r.name).filter((n): n is string => n != null && n !== '');
+        if (!names.length) {
+            log(`${tallyType}: ${expected} records but no AlterID or Name to page by — cannot fetch safely; skipping`, true);
+            return { rows: [], fields: [], expected, got: 0, complete: false, windows: 0 };
         }
+        log(`${tallyType}: ${expected} records, no AlterID — name-batched fallback of ~${windowSize}`);
+        for (let i = 0; i < names.length; i += windowSize) {
+            const chunk = names.slice(i, i + windowSize);
+            try {
+                const xml = buildFetchXmlFiltered(tallyType, '*', nameFilter(chunk), opts);
+                const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
+                absorb(rows.filter(r => r.name != null && r.name !== ''), fields); // drop the blank default item
+                windows++;
+            } catch (e: any) { log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${e?.message || e}`, true); }
+        }
+    } else {
+        // AlterID windows (primary path). Boundaries chosen so each window holds ~windowSize
+        // records regardless of how AlterIDs cluster — (lo, hi] slices, lo just below min.
+        const bounds: Array<{ lo: number; hi: number }> = [];
+        let prev = ids[0] - 1;
+        for (let i = windowSize - 1; i < ids.length; i += windowSize) {
+            const hi = ids[Math.min(i, ids.length - 1)];
+            if (hi > prev) { bounds.push({ lo: prev, hi }); prev = hi; }
+        }
+        if (prev < ids[ids.length - 1]) bounds.push({ lo: prev, hi: ids[ids.length - 1] });
+        log(`${tallyType}: ${expected} records, AlterID ${ids[0]}..${ids[ids.length - 1]}; ${bounds.length} windows of ~${windowSize}`);
+
+        const fetchWindow = async (lo: number, hi: number, depth = 0): Promise<void> => {
+            try {
+                const xml = buildFetchXmlFiltered(tallyType, '*', alterIdRangeFilter(lo, hi), opts);
+                const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
+                absorb(rows.filter(r => Object.keys(r).length), fields);
+            } catch (e: any) {
+                if (hi - lo > 1 && depth < 6) { // split the window and retry the halves
+                    const mid = Math.floor((lo + hi) / 2);
+                    log(`${tallyType}: window (${lo},${hi}] failed (${e?.message || e}); splitting`, true);
+                    await fetchWindow(lo, mid, depth + 1);
+                    await fetchWindow(mid, hi, depth + 1);
+                } else { log(`${tallyType}: window (${lo},${hi}] FAILED - ${e?.message || e}`, true); }
+            }
+        };
+        for (const b of bounds) await fetchWindow(b.lo, b.hi);
+        windows = bounds.length;
     }
-    log(`${tallyType}: done - ${allRows.length} rows, ${fieldOrder.length} fields${failed ? `, ${failed} records FAILED` : ''}`);
-    return { rows: allRows, fields: fieldOrder };
+
+    // completeness self-check
+    const got = allRows.length;
+    const complete = got >= expected;
+    log(`${tallyType}: fetched ${got}/${expected} records, ${fieldOrder.length} fields in ${secs()}${complete ? '' : ' — INCOMPLETE'}`, !complete);
+    return { rows: allRows, fields: fieldOrder, expected, got, complete, windows };
 }
 
 /** Cheap presence/count probe for object discovery (fetches only NAME). */

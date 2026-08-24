@@ -3,7 +3,7 @@
   Tally -> Salesforce Connector.
 
   What it produces:
-    installer\build\TallySalesforceConnector-Setup.exe
+    installer\build\TallySalesforceConnector-Setup-<Version>.exe
 
   The installer bundles:
     * the compiled connector (dist\)
@@ -117,7 +117,7 @@ Step 'Compiling installer with Inno Setup'
 & $iscc "/DMyAppVersion=$Version" (Join-Path $installer 'connector.iss')
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit $LASTEXITCODE)" }
 
-$out = Join-Path $build 'TallySalesforceConnector-Setup.exe'
+$out = Join-Path $build "TallySalesforceConnector-Setup-$Version.exe"
 if (Test-Path $out) {
     $mb = [math]::Round((Get-Item $out).Length / 1MB, 1)
     Write-Host "`nDONE -> $out ($mb MB)" -ForegroundColor Green

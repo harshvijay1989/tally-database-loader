@@ -113,6 +113,13 @@
   .donebanner{margin-top:14px;background:var(--okbg);color:#166534;border:1px solid #86efac;border-radius:10px;padding:12px 14px;font-weight:600;text-align:center}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes sp{to{transform:rotate(360deg)}}
+  /* Full-screen lock shown while Tally discovery is running. Tally's gateway is
+     single-threaded, so we block ALL interaction until the current fetch finishes. */
+  #busyOverlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.55);backdrop-filter:blur(2px)}
+  #busyOverlay .busybox{background:#fff;border-radius:14px;padding:22px 26px;max-width:460px;box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:center;font-size:14.5px;color:#1e293b}
+  #busyOverlay .busybox .spin{border-color:#c7d2fe;border-top-color:#4f46e5;width:20px;height:20px;margin:0 auto 12px;display:block}
+  #busyOverlay .busybox b{display:block;margin-bottom:4px;font-size:15px}
+  #busyOverlay .busybox small{color:#64748b}
   .hidden{display:none!important}
   ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px;border:2px solid var(--canvas)}
 </style>
@@ -479,14 +486,29 @@ async function loadEditor(){
     await refreshTarget();
   }
 }
+// Global lock: while a discovery is in flight, block every other click. Tally's
+// HTTP gateway is single-threaded — a second request landing mid-discovery is what
+// crashes it — so the overlay both protects Tally and stops half-finished actions.
+let busyDepth = 0;
+function uiBusy(){ return busyDepth > 0; }
+function setBusy(on, title, sub){
+  busyDepth = on ? busyDepth + 1 : Math.max(0, busyDepth - 1);
+  let ov = document.getElementById('busyOverlay');
+  if(!ov){ ov = document.createElement('div'); ov.id='busyOverlay'; document.body.appendChild(ov); }
+  if(on && title) ov.innerHTML = '<div class="busybox"><span class="spin"></span><b>'+title+'</b><small>'+(sub||'Please wait — don\'t click anything.')+'</small></div>';
+  ov.style.display = busyDepth > 0 ? 'flex' : 'none';
+}
+
 // live "fetch everything": ask Tally for all fields of the selected object; fall
 // back to our saved field list when Tally is offline. Cached per table.
 const fieldCache = {};
 async function loadFields(table){
   if(fieldCache[table]) return fieldCache[table];
   let entry;
+  setBusy(true, 'Discovering all fields for “'+table+'”…', 'Reading every record from Tally so the field list is complete. This can take a moment on large companies.');
   try{ const r = await (await fetch('/api/tally/fields?table='+encodeURIComponent(table))).json(); entry = { source:r.source||'static', fields:r.fields||[], samples:r.samples||{}, count:r.count }; }
   catch(e){ const t=tallyTables.find(x=>x.name===table); entry = { source:'static', fields:(t?.fields||[]).map(f=>f.name), samples:{}, count:null }; }
+  finally{ setBusy(false); }
   fieldCache[table] = entry; return entry;
 }
 function curFieldNames(){ const t=curTable(); if(!t) return []; const c=fieldCache[t.name]; return c ? c.fields : (t.fields||[]).map(f=>f.name); }
@@ -515,6 +537,7 @@ function fillSrcOptions(sel){
 // the source dropdown with counts, and re-fetch the current object's fields live.
 async function refreshObjects(){
   const btn = document.getElementById('refreshBtn'); btn.disabled=true; const label=btn.textContent; btn.textContent='🔄 Refreshing…';
+  setBusy(true, 'Checking Tally objects…', 'Asking Tally which objects have data.');
   try{
     const r = await (await fetch('/api/tally/objects/refresh')).json();
     if(!r.reachable){ alert('Tally is not reachable.\nStart Tally Prime with the HTTP server ON (port 9000), then try again.'); }
@@ -529,6 +552,7 @@ async function refreshObjects(){
       if(isDrive()) buildExportRows(); else buildMapRows();
     }
   }catch(e){ alert('Refresh failed: '+e); }
+  finally{ setBusy(false); }
   btn.disabled=false; btn.textContent=label;
 }
 
