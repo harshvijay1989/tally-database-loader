@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { logger } from '../logger.mjs';
+import { httpFetch } from '../httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
 // Salesforce sink (pillar 2). Authenticates via Connected App OAuth 2.0 Client
 // Credentials flow, then upserts typed rows into a Salesforce object keyed on an
 // External ID field using the Composite sObject Collections API (batches of 200,
@@ -45,7 +46,7 @@ export class SalesforceSink {
             client_id: c.clientId,
             client_secret: c.clientSecret
         });
-        let resp = await fetch(`${c.instanceUrl}/services/oauth2/token`, {
+        let resp = await httpFetch(`${c.instanceUrl}/services/oauth2/token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body
@@ -75,7 +76,7 @@ export class SalesforceSink {
                     allOrNone: false,
                     records: batch.map(r => ({ attributes: { type: objectApiName }, ...r }))
                 };
-                let resp = await fetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/composite/sobjects/${objectApiName}/${externalIdField}`, {
+                let resp = await httpFetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/composite/sobjects/${objectApiName}/${externalIdField}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${this.accessToken}`,
@@ -109,7 +110,7 @@ export class SalesforceSink {
     }
     /** Run a SOQL query (used for verification / discovery). */
     async query(soql) {
-        let resp = await fetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/query?q=${encodeURIComponent(soql)}`, {
+        let resp = await httpFetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/query?q=${encodeURIComponent(soql)}`, {
             headers: { 'Authorization': `Bearer ${this.accessToken}` }
         });
         let data = await resp.json();

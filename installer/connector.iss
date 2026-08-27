@@ -13,6 +13,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "1.0.0"
 #endif
+#ifndef Variant
+  #define Variant ""
+#endif
 
 #define MyAppName    "Tally to Salesforce Connector"
 #define MyAppExeName "start-connector.bat"
@@ -33,7 +36,7 @@ DisableDirPage=yes
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\node\node.exe
 OutputDir=build
-OutputBaseFilename=TallySalesforceConnector-Setup-{#MyAppVersion}
+OutputBaseFilename=TallySalesforceConnector-Setup-{#MyAppVersion}{#Variant}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

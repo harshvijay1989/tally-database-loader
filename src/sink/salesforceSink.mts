@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { logger } from '../logger.mjs';
+import { httpFetch } from '../httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
 import { connectionConfig, tableConfigJSON, sinkAdapter, sinkCapabilities, salesforceCredentials, upsertResult } from '../definition.mjs';
 
 // Salesforce sink (pillar 2). Authenticates via Connected App OAuth 2.0 Client
@@ -52,7 +53,7 @@ export class SalesforceSink implements sinkAdapter {
             client_id: c.clientId,
             client_secret: c.clientSecret
         });
-        let resp = await fetch(`${c.instanceUrl}/services/oauth2/token`, {
+        let resp = await httpFetch(`${c.instanceUrl}/services/oauth2/token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body
@@ -84,7 +85,7 @@ export class SalesforceSink implements sinkAdapter {
                     allOrNone: false,
                     records: batch.map(r => ({ attributes: { type: objectApiName }, ...r }))
                 };
-                let resp = await fetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/composite/sobjects/${objectApiName}/${externalIdField}`, {
+                let resp = await httpFetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/composite/sobjects/${objectApiName}/${externalIdField}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${this.accessToken}`,
@@ -117,7 +118,7 @@ export class SalesforceSink implements sinkAdapter {
 
     /** Run a SOQL query (used for verification / discovery). */
     async query(soql: string): Promise<any[]> {
-        let resp = await fetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/query?q=${encodeURIComponent(soql)}`, {
+        let resp = await httpFetch(`${this.apiBaseUrl}/services/data/${this.apiVersion}/query?q=${encodeURIComponent(soql)}`, {
             headers: { 'Authorization': `Bearer ${this.accessToken}` }
         });
         let data: any = await resp.json();

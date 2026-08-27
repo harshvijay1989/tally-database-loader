@@ -22,7 +22,11 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '1.0.0'
+    [string]$Version = '1.0.0',
+    # Build the Windows 7/8 variant: bundle Node 14 (the last runtime that supports
+    # those OSes) instead of the build machine's Node, and name the output -win7.
+    [switch]$Win7,
+    [string]$Node14Url = 'https://nodejs.org/dist/v14.21.3/win-x64/node.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,16 +112,31 @@ Pop-Location
 # --- 4. portable Node runtime ---------------------------------------------------
 Step 'Bundling portable Node.js runtime'
 New-Item -ItemType Directory -Path (Join-Path $payload 'node') -Force | Out-Null
-Copy-Item $nodeExe (Join-Path $payload 'node\node.exe') -Force
-$nodeVer = (& $nodeExe --version)
-Write-Host "bundled Node runtime $nodeVer"
+$bundleNode = $nodeExe
+$variant = ''
+if ($Win7) {
+    # Bundle Node 14 (last version that runs on Windows 7 SP1 / 8 / 8.1). Cached so
+    # repeat builds don't re-download. The connector code is fetch-free, so it runs on 14.
+    $variant = '-win7'
+    $cacheDir = Join-Path $build 'node14-cache'
+    New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    $bundleNode = Join-Path $cacheDir 'node.exe'
+    if (-not (Test-Path $bundleNode)) {
+        Write-Host "Downloading Node 14 for the Win7/8 build: $Node14Url"
+        Invoke-WebRequest -Uri $Node14Url -OutFile $bundleNode
+    }
+    Write-Host 'WARNING: the Win7/8 build bundles Node 14, which is end-of-life (no security updates).' -ForegroundColor Yellow
+}
+Copy-Item $bundleNode (Join-Path $payload 'node\node.exe') -Force
+$nodeVer = (& $bundleNode --version)
+Write-Host "bundled Node runtime $nodeVer$(if ($Win7) { ' (Windows 7/8 legacy build)' })"
 
 # --- 5. compile the installer ---------------------------------------------------
 Step 'Compiling installer with Inno Setup'
-& $iscc "/DMyAppVersion=$Version" (Join-Path $installer 'connector.iss')
+& $iscc "/DMyAppVersion=$Version" "/DVariant=$variant" (Join-Path $installer 'connector.iss')
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit $LASTEXITCODE)" }
 
-$out = Join-Path $build "TallySalesforceConnector-Setup-$Version.exe"
+$out = Join-Path $build "TallySalesforceConnector-Setup-$Version$variant.exe"
 if (Test-Path $out) {
     $mb = [math]::Round((Get-Item $out).Length / 1MB, 1)
     Write-Host "`nDONE -> $out ($mb MB)" -ForegroundColor Green

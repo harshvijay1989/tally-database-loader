@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import child_process from 'node:child_process';
 import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
+import { httpFetch } from './httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
 // App version (for logs), read from package.json; falls back if unreadable.
 const APP_VERSION = (() => { try {
     return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0';
@@ -86,7 +87,7 @@ async function sfAuth(force = false) {
     if (!force && sfCache && Date.now() - sfCache.at < 25 * 60 * 1000)
         return sfCache.auth;
     const body = new URLSearchParams({ grant_type: 'client_credentials', client_id: c.clientId, client_secret: c.clientSecret });
-    const resp = await fetch(`${c.instanceUrl.replace(/\/$/, '')}/services/oauth2/token`, {
+    const resp = await httpFetch(`${c.instanceUrl.replace(/\/$/, '')}/services/oauth2/token`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body
     });
     const data = await resp.json().catch(() => ({}));
@@ -107,17 +108,17 @@ async function sfApi(path) {
     let auth = await sfAuth();
     if (!auth)
         throw new Error('Salesforce not connected');
-    let resp = await fetch(`${auth.instanceUrl}${path}`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } });
+    let resp = await httpFetch(`${auth.instanceUrl}${path}`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } });
     if (resp.status === 401) {
         auth = await sfAuth(true);
         if (auth)
-            resp = await fetch(`${auth.instanceUrl}${path}`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } });
+            resp = await httpFetch(`${auth.instanceUrl}${path}`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } });
     }
     return resp.json();
 }
 async function sfUsername(auth) {
     try {
-        const u = await (await fetch(`${auth.instanceUrl}/services/oauth2/userinfo`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } })).json();
+        const u = await (await httpFetch(`${auth.instanceUrl}/services/oauth2/userinfo`, { headers: { 'Authorization': `Bearer ${auth.accessToken}` } })).json();
         return u.preferred_username || u.name || u.email || '';
     }
     catch {
@@ -133,7 +134,7 @@ async function googleToken(force = false) {
     if (!force && gCache && Date.now() < gCache.expires - 60000)
         return gCache.token;
     const body = new URLSearchParams({ client_id: g.clientId, client_secret: g.clientSecret, refresh_token: g.refreshToken, grant_type: 'refresh_token' });
-    const resp = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+    const resp = await httpFetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.access_token)
         return null;
@@ -142,7 +143,7 @@ async function googleToken(force = false) {
 }
 async function googleEmail(token) {
     try {
-        const u = await (await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { 'Authorization': `Bearer ${token}` } })).json();
+        const u = await (await httpFetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { 'Authorization': `Bearer ${token}` } })).json();
         return u.email || '';
     }
     catch {
@@ -156,7 +157,7 @@ async function driveUpload(token, folderId, name, csv) {
     const boundary = 't2sf' + Math.random().toString(36).slice(2);
     const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
         `--${boundary}\r\nContent-Type: text/csv\r\n\r\n${csv}\r\n--${boundary}--`;
-    const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink', {
+    const resp = await httpFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink', {
         method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body
     });
     const data = await resp.json().catch(() => ({}));
@@ -245,7 +246,7 @@ async function pushLogToDrive(force = false) {
         }
         catch { }
         if (fileId) {
-            const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
+            const r = await httpFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
                 method: 'PATCH', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'text/plain' }, body: content
             });
             if (r.ok) {
@@ -261,7 +262,7 @@ async function pushLogToDrive(force = false) {
         const boundary = 't2sflog' + Math.random().toString(36).slice(2);
         const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`
             + `--${boundary}\r\nContent-Type: text/plain\r\n\r\n${content}\r\n--${boundary}--`;
-        const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id', {
+        const r = await httpFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id', {
             method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body
         });
         if (r.ok) {
@@ -389,7 +390,7 @@ async function upsertRecords(auth, objectApi, externalIdField, rows) {
     for (let i = 0; i < rows.length; i += 200) {
         const batch = rows.slice(i, i + 200);
         const payload = { allOrNone: false, records: batch.map(r => ({ attributes: { type: objectApi }, ...r })) };
-        const resp = await fetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/composite/sobjects/${objectApi}/${externalIdField}`, {
+        const resp = await httpFetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/composite/sobjects/${objectApi}/${externalIdField}`, {
             method: 'PATCH',
             headers: { 'Authorization': `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -683,7 +684,7 @@ const server = http.createServer(async (req, res) => {
                 return send(200, 'text/html', `<h2>Google sign-in cancelled</h2><p>${err || 'no code returned'}. You can close this tab.</p>`);
             const g = loadConn().google;
             const body = new URLSearchParams({ code, client_id: g.clientId, client_secret: g.clientSecret, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code' });
-            const tok = await (await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).json().catch(() => ({}));
+            const tok = await (await httpFetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).json().catch(() => ({}));
             if (tok.refresh_token) {
                 const c = loadConn();
                 c.google.refreshToken = tok.refresh_token;
