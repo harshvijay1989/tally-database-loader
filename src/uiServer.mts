@@ -4,6 +4,9 @@ import child_process from 'node:child_process';
 import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
 
+// App version (for logs), read from package.json; falls back if unreadable.
+const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
+
 // Local web UI for the Tally connector (mapping designer + sync engine).
 //
 // Connections are configured entirely from the UI and stored in connections.json
@@ -188,24 +191,27 @@ function logLine(msg: string, isError = false): void {
 // every few seconds during a run and once at the end. No-op if Google isn't set up.
 const LOG_ID_FILE = './.drive-log-id';
 let lastLogPush = 0;
+let lastPushedLen = -1;
 async function pushLogToDrive(force = false): Promise<void> {
     try {
         if (!force && Date.now() - lastLogPush < 6000) return; // throttle
         const token = await googleToken();
-        if (!token) return;
-        lastLogPush = Date.now();
+        if (!token) return; // Google not connected — nothing to push to
         let content = '';
-        try { content = fs.readFileSync('./sync-log.txt', 'utf8'); } catch { }
+        try { content = fs.readFileSync(LOG_FILE, 'utf8'); } catch { }
         if (content.length > 300000) content = content.slice(-300000); // keep it light
+        // skip redundant uploads when nothing new was logged (heartbeat on an idle connector)
+        if (!force && content.length === lastPushedLen) return;
+        lastLogPush = Date.now();
         const name = 'Connector Live Log.txt';
         let fileId = ''; try { fileId = fs.readFileSync(LOG_ID_FILE, 'utf8').trim(); } catch { }
         if (fileId) {
             const r = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
                 method: 'PATCH', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'text/plain' }, body: content
             });
-            if (r.ok) return;
+            if (r.ok) { lastPushedLen = content.length; return; }
         }
-        // create (first time, or the old file was deleted)
+        // create (first time, or the old file was deleted/trashed on Drive)
         const folderId = loadConn().google.folderId || '';
         const meta: any = { name, mimeType: 'text/plain' };
         if (folderId) meta.parents = [folderId];
@@ -215,7 +221,7 @@ async function pushLogToDrive(force = false): Promise<void> {
         const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id', {
             method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body
         });
-        if (r.ok) { const d: any = await r.json(); try { fs.writeFileSync(LOG_ID_FILE, d.id); } catch { } }
+        if (r.ok) { const d: any = await r.json(); try { fs.writeFileSync(LOG_ID_FILE, d.id); } catch { } lastPushedLen = content.length; }
     } catch { /* never let logging break a run */ }
 }
 
@@ -810,5 +816,13 @@ server.on('error', (err: any) => {
 server.listen(PORT, HOST, () => {
     const shown = HOST === '0.0.0.0' ? `http://localhost:${PORT} (also reachable from other machines on this network)` : `http://localhost:${PORT}`;
     console.log(`Connector UI running at ${shown}`);
+    logLine(`connector started (v${APP_VERSION}) on ${shown}`);
+    // Heartbeat: keep the remote Drive log current no matter what the connector is
+    // doing — not only during an export run. Discovery (where Tally can wedge) now gets
+    // mirrored too, so an admin can diagnose it remotely. The push runs on Google's API,
+    // independent of Tally, so it still fires even while a Tally request is in flight.
+    // Guarded to skip when nothing new was logged, so an idle connector stays quiet.
+    pushLogToDrive(true).catch(() => { });                                  // create/refresh the file at startup
+    setInterval(() => { pushLogToDrive().catch(() => { }); }, 20000);       // then keep it fresh
     if (!process.env.NO_OPEN) child_process.exec(`start http://localhost:${PORT}`);
 });
