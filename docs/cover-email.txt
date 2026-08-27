@@ -1,0 +1,50 @@
+Subject: Tally Connector v2.0.0 — installer + important note before you run a full export
+
+Hi [Name],
+
+Please find attached the latest Tally Connector (version 2.0.0):
+
+  • TallySalesforceConnector-Setup-2.0.0.exe       — for Windows 10 / 11
+  • TallySalesforceConnector-Setup-2.0.0-win7.exe  — for Windows 7 / 8 / 8.1
+  • Export note & disclaimer (please read before the first export)
+
+WHICH INSTALLER TO USE
+  • Windows 10 or 11  -> use the standard installer (…-2.0.0.exe).
+  • Windows 7, 8 or 8.1 -> use the …-2.0.0-win7.exe build.
+  Not sure? On the PC press Win+R, type "winver", and press Enter — it
+  shows the Windows version. If in doubt, the -win7 build also runs on
+  Windows 10/11, so it is the safe choice.
+
+WHAT'S NEW IN 2.0.0
+  • Complete data export — every available field of every record.
+  • Reworked to be much safer on large companies: data is fetched in small,
+    bounded batches instead of one large request.
+  • Detailed logging so any issue can be diagnosed quickly.
+  • The installer now detects an existing version and lets you Update or
+    Uninstall; updating keeps your saved settings and mappings.
+
+INSTALLING / UPDATING
+  1. Close the connector if it is running.
+  2. Run TallySalesforceConnector-Setup-2.0.0.exe.
+  3. If a previous version is installed, choose "Update" when prompted.
+
+ONE IMPORTANT POINT (please read the attached note)
+Exporting ALL data is not how Tally's export gateway is designed to be used, so
+on larger companies Tally can occasionally become slow or unresponsive during an
+export. We have engineered the connector specifically to minimise this, but it
+cannot be ruled out entirely because the limitation is within Tally itself.
+
+Before your first full export, please:
+  • Take a backup of your Tally company data.
+  • Run the export when Tally is not being actively used, ideally off-peak.
+  • Keep the company open with the HTTP server enabled (port 9000).
+
+If Tally does become unresponsive, no data is changed — simply restart Tally
+Prime, reopen the company, and run again. Full details are in the attached note,
+including our disclaimer of liability.
+
+Happy to jump on a quick call to walk through the first run if that helps.
+
+Best regards,
+[Your name]
+[Your company / contact]

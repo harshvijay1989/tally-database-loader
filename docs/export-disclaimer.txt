@@ -1,0 +1,50 @@
+IMPORTANT NOTE — TALLY DATA EXPORT
+Please read before running a full data export.
+
+WHAT THIS TOOL DOES
+The connector reads your Tally data and exports it — including every available
+field of every record — into CSV files (and on to your chosen destination),
+giving you a complete extract of your Tally information.
+
+THE TECHNICAL REALITY
+Tally's built-in HTTP/XML gateway is single-threaded and was designed for
+targeted, on-demand lookups — not for exporting all fields of all records at
+once. Pulling a complete dataset pushes Tally beyond its normal request pattern.
+Because of this, on larger companies Tally may temporarily become slow, stop
+responding, or appear "stuck" while an export is running. This is a
+characteristic of how Tally itself is built, not a fault in your data.
+
+WHAT WE HAVE DONE ABOUT IT
+- Data is fetched in small, bounded batches (never one giant request).
+- Requests are sent one at a time (never overlapping).
+- Automatic retries and adaptive splitting handle heavy batches.
+- Every run is logged in detail so issues can be diagnosed quickly.
+This is dramatically safer than a naive "export all," but because the underlying
+limitation is in Tally, we cannot guarantee it will never occur.
+
+HOW IT INTERACTS WITH TALLY
+The connector only reads from Tally — it never writes to, edits, or deletes
+anything. In normal operation, if Tally becomes unresponsive you can restart
+Tally Prime, reopen the company, and re-run the export.
+
+PLEASE BACK UP YOUR DATA FIRST
+Because a full export drives Tally harder than everyday use, please take a
+current backup of your Tally company data before running an export.
+
+DISCLAIMER OF LIABILITY
+You use this tool and run exports at your own risk. While we have taken
+significant measures to make the process as safe as possible, the underlying
+limitation lies within Tally's own export gateway and is outside our control.
+Accordingly, we do not accept any responsibility or liability for any data loss,
+data corruption, downtime, or business disruption arising from the use of this
+connector or from Tally becoming unresponsive during an export. It is your
+responsibility to maintain adequate backups.
+
+RECOMMENDATIONS
+- Take a backup before running a large export.
+- Run large exports when Tally is not being actively used.
+- Keep the company open in Tally with its HTTP server enabled (port 9000).
+- Prefer running big, first-time exports during off-peak hours.
+
+If you run into any issue, share the connector's log file (sync-log.txt) with
+us — it records exactly what happened and where, so we can help quickly.
