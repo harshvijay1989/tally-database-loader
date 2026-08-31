@@ -183,7 +183,7 @@
     </div>
     <div class="panes">
       <div class="pane source">
-        <div class="pane-head"><span class="chip tally">Tally</span><h3 id="srcTitle">Source fields</h3><span class="count" id="srcCount"></span></div>
+        <div class="pane-head"><span class="chip tally">Tally</span><h3 id="srcTitle">Source fields</h3><span class="count" id="srcCount"></span><button class="ghost" style="margin-left:auto;padding:3px 10px;font-size:12.5px" onclick="refreshFields()" title="Fetch this object's fields live from Tally">🔄 Refresh fields</button></div>
         <div class="pane-search"><input id="srcSearch" class="search" placeholder="Search Tally fields…" oninput="filterSrc()"></div>
         <div class="pane-body" id="tallyFields"></div>
       </div>
@@ -560,10 +560,18 @@ function setBusy(on, title, sub){
 // live "fetch everything": ask Tally for all fields of the selected object; fall
 // back to our saved field list when Tally is offline. Cached per table.
 const fieldCache = {};
-async function loadFields(table){
-  if(fieldCache[table]) return fieldCache[table];
+// Fields load WITHOUT touching Tally by default — the saved/static list, instantly.
+// Live discovery only happens when the user asks (live=true, via the Refresh button),
+// so nothing is fetched on startup or when just switching objects.
+async function loadFields(table, live=false){
+  if(!live && fieldCache[table]) return fieldCache[table];
+  if(!live){
+    const t=tallyTables.find(x=>x.name===table);
+    const entry = { source:'static', fields:(t?.fields||[]).map(f=>f.name), samples:{}, count:null };
+    fieldCache[table] = entry; return entry;
+  }
   let entry;
-  setBusy(true, 'Discovering all fields for “'+table+'”…', 'Reading every record from Tally so the field list is complete. This can take a moment on large companies.');
+  setBusy(true, 'Discovering fields for “'+table+'”…', 'Reading a sample of records from Tally to list every field.');
   try{ const r = await (await fetch('/api/tally/fields?table='+encodeURIComponent(table))).json(); entry = { source:r.source||'static', fields:r.fields||[], samples:r.samples||{}, count:r.count }; }
   catch(e){ const t=tallyTables.find(x=>x.name===table); entry = { source:'static', fields:(t?.fields||[]).map(f=>f.name), samples:{}, count:null }; }
   finally{ setBusy(false); }
@@ -606,7 +614,7 @@ async function refreshObjects(){
         opt.textContent = opt.value + (t&&t.isMaster?' · master':'') + (c ? (c.present?` (${c.count})`:' (empty)') : '');
       });
       for(const k in fieldCache) delete fieldCache[k]; // force live re-fetch
-      await showSourceFields();
+      await showSourceFields(true);
       if(isDrive()) buildExportRows(); else buildMapRows();
     }
   }catch(e){ alert('Refresh failed: '+e); }
@@ -614,14 +622,21 @@ async function refreshObjects(){
   btn.disabled=false; btn.textContent=label;
 }
 
-async function showSourceFields(){
+// Manual, per-object live discovery — only runs when the user clicks Refresh fields.
+async function refreshFields(){
+  const t = curTable(); if(!t) return;
+  delete fieldCache[t.name];              // force a fresh live fetch
+  await showSourceFields(true);
+  if(isDrive()) buildExportRows(); else buildMapRows();
+}
+async function showSourceFields(live=false){
   const t = curTable(); if(!t){ document.getElementById('tallyFields').innerHTML=''; return; }
   document.getElementById('srcTitle').textContent = t.name;
-  document.getElementById('srcCount').innerHTML = '<span class="spin dark" style="width:11px;height:11px"></span> loading…';
-  const info = await loadFields(t.name);
+  if(live) document.getElementById('srcCount').innerHTML = '<span class="spin dark" style="width:11px;height:11px"></span> discovering…';
+  const info = await loadFields(t.name, live);
   const badge = info.source==='live'
     ? '<span class="badge rel" title="fetched live from Tally">live</span>'
-    : '<span class="badge" style="color:#92702a;background:#fef3c7" title="Tally offline — showing saved fields">saved</span>';
+    : '<span class="badge" style="color:#92702a;background:#fef3c7" title="Saved field list — click Refresh to fetch live from Tally">saved</span>';
   document.getElementById('srcCount').innerHTML = info.fields.length+' fields '+badge;
   document.getElementById('filterField').innerHTML = '<option value="">— all rows —</option>' + info.fields.map(n=>`<option value="${escA(n)}">${escH(n)}</option>`).join('');
   renderSourceFields();
