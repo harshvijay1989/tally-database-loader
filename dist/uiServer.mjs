@@ -574,18 +574,20 @@ async function runMapping(name, emit) {
             const dopts = liveDateOpts(tc, cat.tallyType);
             const ckey = discoverKey(cat.tallyType, dopts);
             const hit = discoverCache.get(ckey);
-            if (hit && Date.now() - hit.ts < DISCOVER_TTL_MS) {
-                logLine(`  reusing discovered data for ${table} (${hit.rows.length} rows, all fields)`);
+            // Only reuse a FULL (non-sampled) cache. Discovery caches a sample, so export
+            // must do its own full walk to get every record.
+            if (hit && !hit.sampled && Date.now() - hit.ts < DISCOVER_TTL_MS) {
+                logLine(`  reusing full data for ${table} (${hit.rows.length} rows, all fields)`);
                 rows = hit.rows;
             }
             else {
-                // no fresh discovery — walk the whole object safely (windowed FETCH *)
+                // full data pull — walk the whole object safely (windowed FETCH *)
                 const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
                     ...dopts, windowSize: tc.batchSize,
                     log: (m, e) => { logLine('  ' + m, e); emit({ type: 'log', message: m, error: !!e }); }
                 });
                 rows = r.rows;
-                discoverCache.set(ckey, { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete });
+                discoverCache.set(ckey, { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete, sampled: false });
             }
         }
         else {
@@ -809,23 +811,20 @@ const server = http.createServer(async (req, res) => {
                     logLine(`[discover] ${table}: reusing cached ${cat.tallyType} (${hit.rows.length} rows, ${hit.fields.length} fields)`);
                     return json(200, { source: 'live', tallyType: cat.tallyType, fields: hit.fields, samples: buildSamples(hit.fields, hit.rows), count: hit.rows.length });
                 }
-                // Complete, safe discovery: walk the WHOLE collection in bounded AlterID
-                // windows (FETCH * per small window) and union every field. Never a bare
-                // FETCH * over the whole collection (that rebuilds every record's nested
-                // trees and wedges Tally). Walking every record is required for a complete
-                // picker — a field exists only if some record populates it — so this is the
-                // only way to be SURE the matching UI shows every field.
+                // Discovery = safe, FAST field sampling: walk bounded AlterID windows
+                // (FETCH * per small window) and union fields, stopping as soon as the field
+                // set stops growing (a field appears only if some record populates it, but the
+                // set saturates after a few windows). Never a bare FETCH * over the whole
+                // collection (that wedges Tally). The full data pull happens at export time.
                 const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
-                    ...dopts, windowSize: tc.batchSize,
+                    ...dopts, windowSize: tc.batchSize, stopWhenStableFor: 2,
                     log: (m, e) => logLine('[discover] ' + m, e)
                 });
                 if (!r.fields.length)
                     throw new Error('no fields returned');
-                if (!r.complete)
-                    logLine(`[discover] warning: ${cat.tallyType} returned ${r.got}/${r.expected} records — field list may be partial`, true);
-                // keep the full rows so export (and same-type discovery) reuse them
-                discoverCache.set(discoverKey(cat.tallyType, dopts), { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete });
-                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples: buildSamples(r.fields, r.rows), count: r.got });
+                // rows here are only a sample (sampled:true) — export will do its own full walk
+                discoverCache.set(discoverKey(cat.tallyType, dopts), { fields: r.fields, rows: r.rows, ts: Date.now(), expected: r.expected, complete: r.complete, sampled: true });
+                return json(200, { source: 'live', tallyType: cat.tallyType, fields: r.fields, samples: buildSamples(r.fields, r.rows), count: r.expected });
             }
             catch (e) {
                 logLine(`[discover] ${cat.tallyType} failed, using saved fields — ${tallyLive.describeError(e)}`, true);

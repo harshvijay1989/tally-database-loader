@@ -280,7 +280,7 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
             }
         allRows.push(...rows);
     };
-    let windows = 0;
+    let windows = 0, earlyStop = false;
     if (!ids.length) {
         // Some config masters (e.g. cost centres) carry no AlterID. Fall back to
         // NAME-filtered batches using the names we already listed — still bounded,
@@ -292,6 +292,7 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
         }
         const batchTotal = Math.ceil(names.length / windowSize);
         log(`${tallyType}: ${expected} records, no AlterID — processing in ${batchTotal} name-batches of ~${windowSize}`);
+        let stable = 0, prevFields = 0;
         for (let i = 0; i < names.length; i += windowSize) {
             const chunk = names.slice(i, i + windowSize);
             try {
@@ -299,7 +300,18 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
                 const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
                 absorb(rows.filter(r => r.name != null && r.name !== ''), fields); // drop the blank default item
                 windows++;
+                if (fieldOrder.length === prevFields)
+                    stable++;
+                else {
+                    stable = 0;
+                    prevFields = fieldOrder.length;
+                }
                 log(`${tallyType}: batch ${windows}/${batchTotal} done — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
+                if (opts.stopWhenStableFor && stable >= opts.stopWhenStableFor) {
+                    earlyStop = true;
+                    log(`${tallyType}: field set stable — stopping after ${allRows.length} sampled records, ${fieldOrder.length} fields`);
+                    break;
+                }
             }
             catch (e) {
                 log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${describeError(e)}`, true);
@@ -342,18 +354,34 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
                 }
             }
         };
-        let done = 0;
+        let done = 0, stable = 0, prevFields = 0;
         for (const b of bounds) {
             await fetchWindow(b.lo, b.hi);
             done++;
+            if (fieldOrder.length === prevFields)
+                stable++;
+            else {
+                stable = 0;
+                prevFields = fieldOrder.length;
+            }
             log(`${tallyType}: processed ${done}/${bounds.length} windows — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
+            // discovery only: once the field set stops growing, we've seen every field — stop
+            if (opts.stopWhenStableFor && stable >= opts.stopWhenStableFor) {
+                earlyStop = true;
+                log(`${tallyType}: field set stable (no new fields for ${stable} windows) — stopping after ${allRows.length} sampled records, ${fieldOrder.length} fields`);
+                break;
+            }
         }
-        windows = bounds.length;
+        windows = done;
     }
-    // completeness self-check
+    // completeness self-check. An intentional early stop (discovery sampling) is NOT
+    // incomplete — it walked enough records to see every field.
     const got = allRows.length;
-    const complete = got >= expected;
-    log(`${tallyType}: fetched ${got}/${expected} records, ${fieldOrder.length} fields in ${secs()}${complete ? '' : ' — INCOMPLETE'}`, !complete);
+    const complete = earlyStop ? true : got >= expected;
+    if (earlyStop)
+        log(`${tallyType}: discovery sampled ${got} of ${expected} records, ${fieldOrder.length} fields in ${secs()}`);
+    else
+        log(`${tallyType}: fetched ${got}/${expected} records, ${fieldOrder.length} fields in ${secs()}${complete ? '' : ' — INCOMPLETE'}`, !complete);
     return { rows: allRows, fields: fieldOrder, expected, got, complete, windows };
 }
 /** Cheap presence/count probe for object discovery (fetches only NAME). */

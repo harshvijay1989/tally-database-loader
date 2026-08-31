@@ -212,6 +212,7 @@ export async function fetchObject(server: string, port: number, tallyType: strin
 export type LogFn = (msg: string, isError?: boolean) => void;
 export interface BatchedOptions extends LiveFetchOptions {
     windowSize?: number;  // fetchAllWindowed: target records per AlterID window (default 500)
+    stopWhenStableFor?: number; // discovery: stop once this many consecutive windows add NO new fields (0 = walk all)
     log?: LogFn;
 }
 
@@ -290,7 +291,7 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
         for (const f of fields) if (!seen.has(f)) { seen.add(f); fieldOrder.push(f); }
         allRows.push(...rows);
     };
-    let windows = 0;
+    let windows = 0, earlyStop = false;
 
     if (!ids.length) {
         // Some config masters (e.g. cost centres) carry no AlterID. Fall back to
@@ -303,6 +304,7 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
         }
         const batchTotal = Math.ceil(names.length / windowSize);
         log(`${tallyType}: ${expected} records, no AlterID — processing in ${batchTotal} name-batches of ~${windowSize}`);
+        let stable = 0, prevFields = 0;
         for (let i = 0; i < names.length; i += windowSize) {
             const chunk = names.slice(i, i + windowSize);
             try {
@@ -310,7 +312,13 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
                 const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
                 absorb(rows.filter(r => r.name != null && r.name !== ''), fields); // drop the blank default item
                 windows++;
+                if (fieldOrder.length === prevFields) stable++; else { stable = 0; prevFields = fieldOrder.length; }
                 log(`${tallyType}: batch ${windows}/${batchTotal} done — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
+                if (opts.stopWhenStableFor && stable >= opts.stopWhenStableFor) {
+                    earlyStop = true;
+                    log(`${tallyType}: field set stable — stopping after ${allRows.length} sampled records, ${fieldOrder.length} fields`);
+                    break;
+                }
             } catch (e: any) { log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${describeError(e)}`, true); }
         }
     } else {
@@ -342,19 +350,28 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
                 }
             }
         };
-        let done = 0;
+        let done = 0, stable = 0, prevFields = 0;
         for (const b of bounds) {
             await fetchWindow(b.lo, b.hi);
             done++;
+            if (fieldOrder.length === prevFields) stable++; else { stable = 0; prevFields = fieldOrder.length; }
             log(`${tallyType}: processed ${done}/${bounds.length} windows — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
+            // discovery only: once the field set stops growing, we've seen every field — stop
+            if (opts.stopWhenStableFor && stable >= opts.stopWhenStableFor) {
+                earlyStop = true;
+                log(`${tallyType}: field set stable (no new fields for ${stable} windows) — stopping after ${allRows.length} sampled records, ${fieldOrder.length} fields`);
+                break;
+            }
         }
-        windows = bounds.length;
+        windows = done;
     }
 
-    // completeness self-check
+    // completeness self-check. An intentional early stop (discovery sampling) is NOT
+    // incomplete — it walked enough records to see every field.
     const got = allRows.length;
-    const complete = got >= expected;
-    log(`${tallyType}: fetched ${got}/${expected} records, ${fieldOrder.length} fields in ${secs()}${complete ? '' : ' — INCOMPLETE'}`, !complete);
+    const complete = earlyStop ? true : got >= expected;
+    if (earlyStop) log(`${tallyType}: discovery sampled ${got} of ${expected} records, ${fieldOrder.length} fields in ${secs()}`);
+    else log(`${tallyType}: fetched ${got}/${expected} records, ${fieldOrder.length} fields in ${secs()}${complete ? '' : ' — INCOMPLETE'}`, !complete);
     return { rows: allRows, fields: fieldOrder, expected, got, complete, windows };
 }
 
