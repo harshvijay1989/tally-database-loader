@@ -18,6 +18,7 @@
         "sync": "full",
         "batchsize": 5000,
         "frequency": 0,
-        "company": ""
+        "company": "",
+        "batchSize": 50
     }
 }

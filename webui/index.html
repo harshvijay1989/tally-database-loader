@@ -219,9 +219,9 @@
       <div style="display:flex;gap:12px">
         <div class="frow" style="flex:1"><label>Server address</label><input id="tlServer" placeholder="localhost"></div>
         <div class="frow" style="max-width:120px"><label>Port</label><input id="tlPort" placeholder="9000"></div>
-        <div class="frow" style="max-width:150px"><label>Records per batch</label><input id="tlBatch" type="number" min="50" max="2000" step="50" placeholder="500"></div>
+        <div class="frow" style="max-width:150px"><label>Records per batch</label><input id="tlBatch" type="number" min="50" max="2000" step="50" placeholder="50"></div>
       </div>
-      <p class="hint" style="margin-top:-4px">How many records are fetched from Tally per request (50–2000, default 500). <b>Lower</b> = gentler on Tally (safer on very large companies); <b>higher</b> = fewer requests / faster.</p>
+      <p class="hint" style="margin-top:-4px">How many records are fetched from Tally per request (50–2000, default 50). <b>Lower</b> = gentler on Tally, safest against wedging on very large / cloud-hosted companies; <b>higher</b> = fewer requests / faster exports.</p>
       <div class="connfoot">
         <button onclick="saveTestTally()" style="background:var(--tally)">Save &amp; test</button>
         <span id="tlConnStat" class="connstat"></span>
@@ -388,7 +388,7 @@ async function openConnections(){
   document.getElementById('sfConnStat').textContent = sess.salesforce.connected ? '✓ connected' : '';
   document.getElementById('sfConnStat').className = 'connstat'+(sess.salesforce.connected?' ok':'');
   setGoogleStat(c.google.connected, sess.google.email);
-  try{ const tc = await (await fetch('/api/tally/config')).json(); document.getElementById('tlServer').value = tc.server||''; document.getElementById('tlPort').value = tc.port||''; document.getElementById('tlBatch').value = tc.batchSize||500; }catch(e){}
+  try{ const tc = await (await fetch('/api/tally/config')).json(); document.getElementById('tlServer').value = tc.server||''; document.getElementById('tlPort').value = tc.port||''; document.getElementById('tlBatch').value = tc.batchSize||50; }catch(e){}
   document.getElementById('tlConnStat').textContent='';
   try{ const uc = await (await fetch('/api/connector/config')).json(); document.getElementById('uiPort').value = uc.port||3000; document.getElementById('uiExpose').checked = !!uc.exposeNetwork; }catch(e){}
   document.getElementById('uiConnStat').textContent='';
@@ -411,7 +411,7 @@ async function openLockedConnections(){
        <div class="frow"><label>Destination folder</label><div style="font-weight:600">${g.folderId? g.folderId : 'My Drive (root)'}</div></div>
        <div class="connstat ok" style="margin-top:4px">✓ connected &amp; ready</div>`
     : `<div class="connstat bad">⚠ The fixed Google account isn't connected yet. Please contact your administrator to complete setup.</div>`;
-  try{ const tc = await (await fetch('/api/tally/config')).json(); document.getElementById('tlServer').value = tc.server||''; document.getElementById('tlPort').value = tc.port||''; document.getElementById('tlBatch').value = tc.batchSize||500; }catch(e){}
+  try{ const tc = await (await fetch('/api/tally/config')).json(); document.getElementById('tlServer').value = tc.server||''; document.getElementById('tlPort').value = tc.port||''; document.getElementById('tlBatch').value = tc.batchSize||50; }catch(e){}
   document.getElementById('tlConnStat').textContent='';
   try{ const uc = await (await fetch('/api/connector/config')).json(); document.getElementById('uiPort').value = uc.port||3000; document.getElementById('uiExpose').checked = !!uc.exposeNetwork; }catch(e){}
   document.getElementById('uiConnStat').textContent='';
@@ -421,7 +421,7 @@ async function saveTestTally(){
   const stat=document.getElementById('tlConnStat'); stat.textContent='Saving…'; stat.className='connstat';
   const server=(document.getElementById('tlServer').value||'').trim()||'localhost';
   const port=parseInt(document.getElementById('tlPort').value)||9000;
-  const batchSize=parseInt(document.getElementById('tlBatch').value)||500;
+  const batchSize=parseInt(document.getElementById('tlBatch').value)||50;
   const saved = await (await fetch('/api/tally/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({server,port,batchSize})})).json();
   if(saved && saved.batchSize) document.getElementById('tlBatch').value = saved.batchSize; // reflect clamped value
   stat.textContent='Testing…';

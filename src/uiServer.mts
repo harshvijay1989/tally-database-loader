@@ -165,7 +165,7 @@ interface TallyRuntime { server: string; port: number; company: string; fromDate
 // Records fetched per Tally request (AlterID window). Larger = fewer requests but a
 // heavier load on Tally per request; smaller = gentler but more requests. Clamped so a
 // bad value can never make requests huge (crash risk) or tiny (needlessly slow).
-const DEFAULT_BATCH = 500, MIN_BATCH = 50, MAX_BATCH = 2000;
+const DEFAULT_BATCH = 50, MIN_BATCH = 50, MAX_BATCH = 2000;
 function clampBatch(n: number): number { return Math.min(MAX_BATCH, Math.max(MIN_BATCH, Math.round(n) || DEFAULT_BATCH)); }
 function loadTallyConfig(): TallyRuntime {
     try {
