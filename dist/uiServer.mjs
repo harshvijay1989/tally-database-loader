@@ -608,6 +608,19 @@ const server = http.createServer(async (req, res) => {
             });
         }
         // --- client lockdown profile ---
+        // Live log tail — lets the UI show what the connector is doing on screen
+        // (e.g. during the long discovery pass), not just a spinner.
+        if (url.pathname === '/api/log') {
+            let txt = '';
+            try {
+                txt = fs.readFileSync(LOG_FILE, 'utf8');
+            }
+            catch { }
+            const tail = Math.min(Number(url.searchParams.get('tail')) || 20000, 200000);
+            if (txt.length > tail)
+                txt = txt.slice(-tail);
+            return json(200, { log: txt });
+        }
         if (url.pathname === '/api/client') {
             const p = loadClient();
             let google = { connected: false, email: '', folderId: '' };

@@ -116,10 +116,12 @@
   /* Full-screen lock shown while Tally discovery is running. Tally's gateway is
      single-threaded, so we block ALL interaction until the current fetch finishes. */
   #busyOverlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.55);backdrop-filter:blur(2px)}
-  #busyOverlay .busybox{background:#fff;border-radius:14px;padding:22px 26px;max-width:460px;box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:center;font-size:14.5px;color:#1e293b}
+  #busyOverlay .busybox{background:#fff;border-radius:14px;padding:22px 26px;max-width:600px;box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:center;font-size:14.5px;color:#1e293b}
   #busyOverlay .busybox .spin{border-color:#c7d2fe;border-top-color:#4f46e5;width:20px;height:20px;margin:0 auto 12px;display:block}
   #busyOverlay .busybox b{display:block;margin-bottom:4px;font-size:15px}
   #busyOverlay .busybox small{color:#64748b}
+  #busyOverlay .busylog{margin-top:14px;text-align:left;background:#0f172a;color:#cbd5e1;font:11.5px/1.55 ui-monospace,Consolas,monospace;padding:10px 12px;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  #busyOverlay .busylog:empty{display:none}
   .hidden{display:none!important}
   ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px;border:2px solid var(--canvas)}
 </style>
@@ -489,14 +491,27 @@ async function loadEditor(){
 // Global lock: while a discovery is in flight, block every other click. Tally's
 // HTTP gateway is single-threaded — a second request landing mid-discovery is what
 // crashes it — so the overlay both protects Tally and stops half-finished actions.
-let busyDepth = 0;
+let busyDepth = 0, busyLogTimer = null;
 function uiBusy(){ return busyDepth > 0; }
+async function pollBusyLog(){
+  try{
+    const r = await (await fetch('/api/log?tail=8000')).json();
+    const el = document.getElementById('busyLog'); if(!el) return;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+    el.textContent = r.log || '';
+    if(atBottom) el.scrollTop = el.scrollHeight; // follow the tail unless the user scrolled up
+  }catch(e){ /* ignore */ }
+}
 function setBusy(on, title, sub){
   busyDepth = on ? busyDepth + 1 : Math.max(0, busyDepth - 1);
   let ov = document.getElementById('busyOverlay');
   if(!ov){ ov = document.createElement('div'); ov.id='busyOverlay'; document.body.appendChild(ov); }
-  if(on && title) ov.innerHTML = '<div class="busybox"><span class="spin"></span><b>'+title+'</b><small>'+(sub||'Please wait — don\'t click anything.')+'</small></div>';
-  ov.style.display = busyDepth > 0 ? 'flex' : 'none';
+  if(on && title) ov.innerHTML = '<div class="busybox"><span class="spin"></span><b>'+title+'</b><small>'+(sub||'Please wait — don\'t click anything.')+'</small><pre id="busyLog" class="busylog"></pre></div>';
+  const show = busyDepth > 0;
+  ov.style.display = show ? 'flex' : 'none';
+  // live-tail the connector log on screen while busy (e.g. the long discovery pass)
+  if(show && !busyLogTimer){ pollBusyLog(); busyLogTimer = setInterval(pollBusyLog, 1200); }
+  if(!show && busyLogTimer){ clearInterval(busyLogTimer); busyLogTimer = null; }
 }
 
 // live "fetch everything": ask Tally for all fields of the selected object; fall
