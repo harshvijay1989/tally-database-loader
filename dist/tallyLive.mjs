@@ -290,7 +290,8 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
             log(`${tallyType}: ${expected} records but no AlterID or Name to page by — cannot fetch safely; skipping`, true);
             return { rows: [], fields: [], expected, got: 0, complete: false, windows: 0 };
         }
-        log(`${tallyType}: ${expected} records, no AlterID — name-batched fallback of ~${windowSize}`);
+        const batchTotal = Math.ceil(names.length / windowSize);
+        log(`${tallyType}: ${expected} records, no AlterID — processing in ${batchTotal} name-batches of ~${windowSize}`);
         for (let i = 0; i < names.length; i += windowSize) {
             const chunk = names.slice(i, i + windowSize);
             try {
@@ -298,6 +299,7 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
                 const { rows, fields } = parseCollection(await fetchXmlWithRetry(server, port, xml, 90000, 2), tallyType);
                 absorb(rows.filter(r => r.name != null && r.name !== ''), fields); // drop the blank default item
                 windows++;
+                log(`${tallyType}: batch ${windows}/${batchTotal} done — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
             }
             catch (e) {
                 log(`${tallyType}: name-batch ${i + 1}-${i + chunk.length} FAILED - ${describeError(e)}`, true);
@@ -340,8 +342,12 @@ export async function fetchAllWindowed(server, port, tallyType, opts = {}) {
                 }
             }
         };
-        for (const b of bounds)
+        let done = 0;
+        for (const b of bounds) {
             await fetchWindow(b.lo, b.hi);
+            done++;
+            log(`${tallyType}: processed ${done}/${bounds.length} windows — ${allRows.length}/${expected} records, ${fieldOrder.length} fields so far`);
+        }
         windows = bounds.length;
     }
     // completeness self-check

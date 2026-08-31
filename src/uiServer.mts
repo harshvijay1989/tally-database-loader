@@ -162,16 +162,21 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
 // --- Tally live config + object catalog -------------------------------------
 
 interface TallyRuntime { server: string; port: number; company: string; fromDate: string; toDate: string; batchSize: number; discoverSample: number; }
+// Records fetched per Tally request (AlterID window). Larger = fewer requests but a
+// heavier load on Tally per request; smaller = gentler but more requests. Clamped so a
+// bad value can never make requests huge (crash risk) or tiny (needlessly slow).
+const DEFAULT_BATCH = 500, MIN_BATCH = 50, MAX_BATCH = 2000;
+function clampBatch(n: number): number { return Math.min(MAX_BATCH, Math.max(MIN_BATCH, Math.round(n) || DEFAULT_BATCH)); }
 function loadTallyConfig(): TallyRuntime {
     try {
         const c = JSON.parse(fs.readFileSync('./config.json', 'utf8')).tally || {};
         return {
             server: c.server || 'localhost', port: Number(c.port) || 9000, company: c.company || '',
             fromDate: c.fromdate || '', toDate: c.todate || '',
-            batchSize: Number(c.batchSize) || 25,          // records per request when paging data
-            discoverSample: Number(c.discoverSample) || 0  // 0 = scan all records to find every field
+            batchSize: clampBatch(Number(c.batchSize) || DEFAULT_BATCH), // records per Tally request
+            discoverSample: Number(c.discoverSample) || 0
         };
-    } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '', batchSize: 25, discoverSample: 0 }; }
+    } catch { return { server: 'localhost', port: 9000, company: '', fromDate: '', toDate: '', batchSize: DEFAULT_BATCH, discoverSample: 0 }; }
 }
 
 // --- append-only sync log (so users can see what failed and where) ---
@@ -229,12 +234,13 @@ async function pushLogToDrive(force = false): Promise<void> {
 // Persist the Tally source location (server + port) into config.json, preserving
 // every other tally/database setting. Both the live client and the static
 // extractor read these, so pointing at a server just works.
-function saveTallyConfig(server: string, port: number): void {
+function saveTallyConfig(server: string, port: number, batchSize?: number): void {
     let cfg: any = {};
     try { cfg = JSON.parse(fs.readFileSync('./config.json', 'utf8')); } catch { cfg = {}; }
     cfg.tally = cfg.tally || {};
     cfg.tally.server = server || 'localhost';
     cfg.tally.port = port || 9000;
+    if (batchSize != null) cfg.tally.batchSize = clampBatch(batchSize);
     fs.writeFileSync('./config.json', JSON.stringify(cfg, null, 4));
 }
 
@@ -500,7 +506,7 @@ async function runMapping(name: string, emit: EmitFn): Promise<void> {
             } else {
                 // no fresh discovery — walk the whole object safely (windowed FETCH *)
                 const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
-                    ...dopts,
+                    ...dopts, windowSize: tc.batchSize,
                     log: (m, e) => { logLine('  ' + m, e); emit({ type: 'log', message: m, error: !!e }); }
                 });
                 rows = r.rows;
@@ -618,14 +624,15 @@ const server = http.createServer(async (req, res) => {
         // --- Tally source location (server + port) ---
         if (url.pathname === '/api/tally/config' && req.method === 'GET') {
             const tc = loadTallyConfig();
-            return json(200, { server: tc.server, port: tc.port });
+            return json(200, { server: tc.server, port: tc.port, batchSize: tc.batchSize, batchMin: MIN_BATCH, batchMax: MAX_BATCH });
         }
         if (url.pathname === '/api/tally/config' && req.method === 'POST') {
             const b = JSON.parse(await readBody(req));
             const server = String(b.server || '').trim() || 'localhost';
             const port = parseInt(b.port) || 9000;
-            saveTallyConfig(server, port);
-            return json(200, { saved: true, server, port });
+            const batchSize = b.batchSize != null ? clampBatch(Number(b.batchSize)) : undefined;
+            saveTallyConfig(server, port, batchSize);
+            return json(200, { saved: true, server, port, batchSize: loadTallyConfig().batchSize });
         }
         // Test a Tally location (uses body server/port if given, else the saved config)
         if (url.pathname === '/api/tally/test' && req.method === 'POST') {
@@ -690,7 +697,7 @@ const server = http.createServer(async (req, res) => {
                 // picker — a field exists only if some record populates it — so this is the
                 // only way to be SURE the matching UI shows every field.
                 const r = await tallyLive.fetchAllWindowed(tc.server, tc.port, cat.tallyType, {
-                    ...dopts, windowSize: tc.discoverSample && tc.discoverSample >= 50 ? tc.discoverSample : 500,
+                    ...dopts, windowSize: tc.batchSize,
                     log: (m, e) => logLine('[discover] ' + m, e)
                 });
                 if (!r.fields.length) throw new Error('no fields returned');
