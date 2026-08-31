@@ -571,6 +571,7 @@ const server = http.createServer(async (req, res) => {
             if (b.clientSecret) c.salesforce.clientSecret = b.clientSecret.trim(); // keep existing if blank
             c.salesforce.apiVersion = (b.apiVersion || '62.0').replace(/^v/, '');
             saveConn(c); sfCache = null;
+            logLine(`Salesforce connection settings saved (${c.salesforce.instanceUrl})`);
             return json(200, { saved: true });
         }
         if (url.pathname === '/api/connections/google' && req.method === 'POST') {
@@ -581,6 +582,7 @@ const server = http.createServer(async (req, res) => {
             if (b.clientSecret) c.google.clientSecret = b.clientSecret.trim();
             c.google.folderId = extractDriveFolderId(b.folderId || '');
             saveConn(c); gCache = null;
+            logLine(`Google connection settings saved${c.google.folderId ? ` (folder ${c.google.folderId})` : ''}`);
             return json(200, { saved: true });
         }
 
@@ -589,7 +591,7 @@ const server = http.createServer(async (req, res) => {
             try { const a = await sfAuth(true); if (!a) return json(200, { connected: false, error: 'Enter Instance URL, Client ID and Client Secret first' }); return json(200, { connected: true, user: await sfUsername(a) }); }
             catch (e: any) { return json(200, { connected: false, error: String(e?.message || e) }); }
         }
-        if (url.pathname === '/api/salesforce/disconnect' && req.method === 'POST') { sfCache = null; return json(200, { connected: false }); }
+        if (url.pathname === '/api/salesforce/disconnect' && req.method === 'POST') { sfCache = null; logLine('Salesforce disconnected'); return json(200, { connected: false }); }
 
         // --- Google OAuth browser flow ---
         if (url.pathname === '/api/google/auth-url') {
@@ -605,12 +607,13 @@ const server = http.createServer(async (req, res) => {
             const g = loadConn().google;
             const body = new URLSearchParams({ code, client_id: g.clientId!, client_secret: g.clientSecret!, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code' });
             const tok: any = await (await httpFetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).json().catch(() => ({}));
-            if (tok.refresh_token) { const c = loadConn(); c.google.refreshToken = tok.refresh_token; saveConn(c); gCache = null; }
+            if (tok.refresh_token) { const c = loadConn(); c.google.refreshToken = tok.refresh_token; saveConn(c); gCache = null; logLine('Google connected via browser sign-in'); }
+            else logLine(`Google sign-in did not return a refresh token — ${tok.error_description || tok.error || 'unknown'}`, true);
             const okHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#16a34a">✓ Google connected</h2><p>You can close this tab and return to the connector.</p><script>setTimeout(()=>window.close(),1200)</script></body>`;
             const failHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#b42318">Google sign-in failed</h2><p>${tok.error_description || tok.error || 'no refresh token returned — remove the app under Google Account permissions and try again'}</p></body>`;
             return send(200, 'text/html', tok.refresh_token ? okHtml : failHtml);
         }
-        if (url.pathname === '/api/google/disconnect' && req.method === 'POST') { const c = loadConn(); c.google.refreshToken = ''; saveConn(c); gCache = null; return json(200, { connected: false }); }
+        if (url.pathname === '/api/google/disconnect' && req.method === 'POST') { const c = loadConn(); c.google.refreshToken = ''; saveConn(c); gCache = null; logLine('Google disconnected'); return json(200, { connected: false }); }
 
         // --- Tally source location (server + port) ---
         if (url.pathname === '/api/tally/config' && req.method === 'GET') {
@@ -714,6 +717,7 @@ const server = http.createServer(async (req, res) => {
                 const p = await tallyLive.probePresence(tc.server, tc.port, e.tallyType, liveDateOpts(tc, e.tallyType));
                 return { table: e.table, present: p.present, count: p.count };
             });
+            logLine(`object refresh: ${objects.filter(o => o.present).length}/${objects.length} objects have data`);
             return json(200, { reachable: true, objects });
         }
 
@@ -762,11 +766,14 @@ const server = http.createServer(async (req, res) => {
             const cp = loadClient();
             const destination = (cp.locked && cp.destination) ? cp.destination : (doc.destination || 'salesforce');
             fs.writeFileSync(`${MAP_DIR}/${name}.json`, JSON.stringify({ name, destination, objectMappings: doc.objectMappings || [] }, null, 2));
+            logLine(`mapping saved: "${name}" (${destination}, ${(doc.objectMappings || []).length} object(s))`);
             return json(200, { saved: true, name });
         }
         if (url.pathname === '/api/mappings/delete' && req.method === 'POST') {
-            const file = `${MAP_DIR}/${mapSlug(JSON.parse(await readBody(req)).name)}.json`;
+            const delName = mapSlug(JSON.parse(await readBody(req)).name);
+            const file = `${MAP_DIR}/${delName}.json`;
             if (fs.existsSync(file)) fs.unlinkSync(file);
+            logLine(`mapping deleted: "${delName}"`);
             return json(200, { deleted: true });
         }
         if (url.pathname === '/api/run' && req.method === 'POST') {

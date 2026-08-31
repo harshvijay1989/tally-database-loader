@@ -651,6 +651,7 @@ const server = http.createServer(async (req, res) => {
             c.salesforce.apiVersion = (b.apiVersion || '62.0').replace(/^v/, '');
             saveConn(c);
             sfCache = null;
+            logLine(`Salesforce connection settings saved (${c.salesforce.instanceUrl})`);
             return json(200, { saved: true });
         }
         if (url.pathname === '/api/connections/google' && req.method === 'POST') {
@@ -664,6 +665,7 @@ const server = http.createServer(async (req, res) => {
             c.google.folderId = extractDriveFolderId(b.folderId || '');
             saveConn(c);
             gCache = null;
+            logLine(`Google connection settings saved${c.google.folderId ? ` (folder ${c.google.folderId})` : ''}`);
             return json(200, { saved: true });
         }
         // --- Salesforce connect / test ---
@@ -680,6 +682,7 @@ const server = http.createServer(async (req, res) => {
         }
         if (url.pathname === '/api/salesforce/disconnect' && req.method === 'POST') {
             sfCache = null;
+            logLine('Salesforce disconnected');
             return json(200, { connected: false });
         }
         // --- Google OAuth browser flow ---
@@ -703,7 +706,10 @@ const server = http.createServer(async (req, res) => {
                 c.google.refreshToken = tok.refresh_token;
                 saveConn(c);
                 gCache = null;
+                logLine('Google connected via browser sign-in');
             }
+            else
+                logLine(`Google sign-in did not return a refresh token — ${tok.error_description || tok.error || 'unknown'}`, true);
             const okHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#16a34a">✓ Google connected</h2><p>You can close this tab and return to the connector.</p><script>setTimeout(()=>window.close(),1200)</script></body>`;
             const failHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#b42318">Google sign-in failed</h2><p>${tok.error_description || tok.error || 'no refresh token returned — remove the app under Google Account permissions and try again'}</p></body>`;
             return send(200, 'text/html', tok.refresh_token ? okHtml : failHtml);
@@ -713,6 +719,7 @@ const server = http.createServer(async (req, res) => {
             c.google.refreshToken = '';
             saveConn(c);
             gCache = null;
+            logLine('Google disconnected');
             return json(200, { connected: false });
         }
         // --- Tally source location (server + port) ---
@@ -834,6 +841,7 @@ const server = http.createServer(async (req, res) => {
                 const p = await tallyLive.probePresence(tc.server, tc.port, e.tallyType, liveDateOpts(tc, e.tallyType));
                 return { table: e.table, present: p.present, count: p.count };
             });
+            logLine(`object refresh: ${objects.filter(o => o.present).length}/${objects.length} objects have data`);
             return json(200, { reachable: true, objects });
         }
         // --- Salesforce target discovery (live) ---
@@ -883,12 +891,15 @@ const server = http.createServer(async (req, res) => {
             const cp = loadClient();
             const destination = (cp.locked && cp.destination) ? cp.destination : (doc.destination || 'salesforce');
             fs.writeFileSync(`${MAP_DIR}/${name}.json`, JSON.stringify({ name, destination, objectMappings: doc.objectMappings || [] }, null, 2));
+            logLine(`mapping saved: "${name}" (${destination}, ${(doc.objectMappings || []).length} object(s))`);
             return json(200, { saved: true, name });
         }
         if (url.pathname === '/api/mappings/delete' && req.method === 'POST') {
-            const file = `${MAP_DIR}/${mapSlug(JSON.parse(await readBody(req)).name)}.json`;
+            const delName = mapSlug(JSON.parse(await readBody(req)).name);
+            const file = `${MAP_DIR}/${delName}.json`;
             if (fs.existsSync(file))
                 fs.unlinkSync(file);
+            logLine(`mapping deleted: "${delName}"`);
             return json(200, { deleted: true });
         }
         if (url.pathname === '/api/run' && req.method === 'POST') {

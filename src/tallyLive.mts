@@ -353,6 +353,9 @@ export async function fetchAllWindowed(server: string, port: number, tallyType: 
 
 /** Cheap presence/count probe for object discovery (fetches only NAME). */
 export async function probePresence(server: string, port: number, tallyType: string, opts: LiveFetchOptions = {}, timeoutMs = 8000): Promise<{ present: boolean; count: number }> {
+    // Nested sub-collection paths (e.g. "voucher.allledgerentries") are NOT standalone
+    // collection types — probing one as a <TYPE> wedges Tally's gateway. Never send them.
+    if (!tallyType || tallyType.includes('.')) return { present: false, count: 0 };
     try {
         // single attempt (best-effort discovery); retrying every object doubles refresh time
         const xml = await fetchXmlWithRetry(server, port, buildFetchXml(tallyType, 'NAME', opts), timeoutMs, 1);
