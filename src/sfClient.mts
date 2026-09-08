@@ -46,6 +46,27 @@ export async function sfQuery(soql: string): Promise<any[]> {
     return records;
 }
 
+/** Insert records via Composite sObject Collections (<=200 per call). */
+export async function sfInsert(object: string, records: any[]): Promise<{ ids: string[]; errors: string[] }> {
+    const out = { ids: [] as string[], errors: [] as string[] };
+    if (!records.length) return out;
+    let a = await sfAuth();
+    for (let i = 0; i < records.length; i += 200) {
+        const batch = records.slice(i, i + 200).map(r => ({ attributes: { type: object }, ...r }));
+        const body = JSON.stringify({ allOrNone: false, records: batch });
+        const doReq = (auth: SfAuth) => httpFetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/composite/sobjects`,
+            { method: 'POST', headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' }, body });
+        let r = await doReq(a);
+        if (r.status === 401) { a = await sfAuth(true); r = await doReq(a); }
+        const results: any = await r.json().catch(() => ([]));
+        for (const rr of (Array.isArray(results) ? results : [])) {
+            if (rr.success) out.ids.push(rr.id);
+            else if (out.errors.length < 20) out.errors.push((rr.errors || []).map((e: any) => `${e.statusCode}: ${e.message}`).join('; '));
+        }
+    }
+    return out;
+}
+
 export interface UpsertResult { success: number; failed: number; errors: string[] }
 
 /** Upsert records by external id via Composite sObject Collections (<=200 per call). */
