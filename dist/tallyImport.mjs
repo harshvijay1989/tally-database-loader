@@ -10,11 +10,17 @@ function esc(s) {
 /** Build the Import Data XML for one voucher. ISDEEMEDPOSITIVE is derived from the amount
  *  sign (negative = debit = deemed positive), matching Tally's convention. */
 export function buildVoucherImportXml(v, action = 'Create') {
-    const entries = v.entries.map(e => '<ALLLEDGERENTRIES.LIST>'
+    const hasInv = (v.inventoryEntries || []).length > 0;
+    // KEY Tally rule: Invoice Voucher View (inventory vouchers) uses <LEDGERENTRIES.LIST>
+    // for party/tax postings; Accounting Voucher View uses <ALLLEDGERENTRIES.LIST>. Using
+    // the wrong tag makes Tally reject the voucher with a bare EXCEPTION (no line error).
+    const ledgerTag = hasInv ? 'LEDGERENTRIES.LIST' : 'ALLLEDGERENTRIES.LIST';
+    const objView = v.objView || (hasInv ? 'Invoice Voucher View' : 'Accounting Voucher View');
+    const entries = v.entries.map(e => `<${ledgerTag}>`
         + `<LEDGERNAME>${esc(e.ledger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${e.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
         + `<AMOUNT>${e.amount.toFixed(2)}</AMOUNT>`
-        + '</ALLLEDGERENTRIES.LIST>').join('');
+        + `</${ledgerTag}>`).join('');
     const inventory = (v.inventoryEntries || []).map(i => '<ALLINVENTORYENTRIES.LIST>'
         + `<STOCKITEMNAME>${esc(i.stockItem)}</STOCKITEMNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
@@ -34,7 +40,7 @@ export function buildVoucherImportXml(v, action = 'Create') {
         + '<BODY><IMPORTDATA>'
         + `<REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME>${staticVars}</REQUESTDESC>`
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<VOUCHER ACTION="${action}" VCHTYPE="${esc(v.voucherType)}" OBJVIEW="${esc(v.objView || 'Accounting Voucher View')}">`
+        + `<VOUCHER ACTION="${action}" VCHTYPE="${esc(v.voucherType)}" OBJVIEW="${esc(objView)}">`
         + `<DATE>${esc(v.date)}</DATE>`
         + `<EFFECTIVEDATE>${esc(v.date)}</EFFECTIVEDATE>`
         + `<VOUCHERTYPENAME>${esc(v.voucherType)}</VOUCHERTYPENAME>`
