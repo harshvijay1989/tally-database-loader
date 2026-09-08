@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import child_process from 'node:child_process';
 import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
@@ -67,6 +68,15 @@ const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.goo
 // Salesforce OAuth (refresh-token flow) — the per-distributor agent auth (see docs/salesforce-agent-plan.md)
 const SF_REDIRECT_URI = `http://localhost:${PORT}/oauth/salesforce/callback`;
 const SF_SCOPE = 'api refresh_token offline_access';
+// PKCE (S256) — required by Salesforce External Client Apps and accepted by classic
+// Connected Apps too, so we always use it. The verifier is held between the auth-url
+// call and the callback (single-user connector, so a module var is fine).
+const b64url = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let sfPkceVerifier = '';
+function newPkce() {
+    sfPkceVerifier = b64url(crypto.randomBytes(48));
+    return b64url(crypto.createHash('sha256').update(sfPkceVerifier).digest());
+}
 function ensureMapDir() { if (!fs.existsSync(MAP_DIR))
     fs.mkdirSync(MAP_DIR); }
 function mapSlug(name) { return (String(name).replace(/[^a-zA-Z0-9 _-]/g, '').trim()) || 'mapping'; }
@@ -766,7 +776,8 @@ const server = http.createServer(async (req, res) => {
             if (!s.clientId || !s.clientSecret)
                 return json(400, { error: 'Enter Salesforce Consumer Key + Secret (and Login URL) first' });
             const loginUrl = (s.loginUrl || 'https://login.salesforce.com').replace(/\/$/, '');
-            const p = new URLSearchParams({ response_type: 'code', client_id: s.clientId, redirect_uri: SF_REDIRECT_URI, scope: SF_SCOPE, prompt: 'login' });
+            const challenge = newPkce();
+            const p = new URLSearchParams({ response_type: 'code', client_id: s.clientId, redirect_uri: SF_REDIRECT_URI, scope: SF_SCOPE, prompt: 'login', code_challenge: challenge, code_challenge_method: 'S256' });
             return json(200, { url: `${loginUrl}/services/oauth2/authorize?${p.toString()}` });
         }
         if (url.pathname === '/oauth/salesforce/callback') {
@@ -776,7 +787,7 @@ const server = http.createServer(async (req, res) => {
                 return send(200, 'text/html', `<h2>Salesforce sign-in cancelled</h2><p>${err || 'no code returned'}. You can close this tab.</p>`);
             const s = loadConn().salesforce;
             const loginUrl = (s.loginUrl || 'https://login.salesforce.com').replace(/\/$/, '');
-            const body = new URLSearchParams({ grant_type: 'authorization_code', code, client_id: s.clientId, client_secret: s.clientSecret, redirect_uri: SF_REDIRECT_URI });
+            const body = new URLSearchParams({ grant_type: 'authorization_code', code, client_id: s.clientId, client_secret: s.clientSecret, redirect_uri: SF_REDIRECT_URI, code_verifier: sfPkceVerifier });
             const tok = await (await httpFetch(`${loginUrl}/services/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).json().catch(() => ({}));
             if (tok.refresh_token) {
                 const c = loadConn();
