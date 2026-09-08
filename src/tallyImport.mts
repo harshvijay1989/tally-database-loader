@@ -1,4 +1,4 @@
-import { postTallyXml } from './tallyLive.mjs';
+import { postTallyXml, buildFetchXmlFiltered, nameFilter, parseCollection } from './tallyLive.mjs';
 
 // Tally WRITE path (SF -> Tally) — creates/alters vouchers via an Import Data request over
 // the same UTF-16LE gateway (docs/salesforce-agent-plan.md). This MODIFIES accounting data,
@@ -11,13 +11,22 @@ function esc(s: any): string {
 }
 
 export interface LedgerEntry { ledger: string; amount: number; } // amount<0 = debit, amount>0 = credit
+export interface InventoryEntry {
+    stockItem: string;       // must exist in Tally
+    unit: string;            // base unit, e.g. 'MT', 'pcs'
+    qty: number;             // >0 inward (purchase), <0 outward (sale)
+    rate: number;
+    amount: number;          // <0 = debit (purchase side)
+    accountingLedger: string;// GL ledger the stock value posts to, e.g. 'Purchase'
+}
 export interface VoucherInput {
     date: string;            // YYYYMMDD
     voucherType: string;     // must exist in Tally, e.g. 'Sales'
     partyLedger?: string;    // must exist
     voucherNumber?: string;  // optional (Salesforce-generated, for traceability)
     narration?: string;
-    entries: LedgerEntry[];  // must balance to 0
+    entries: LedgerEntry[];          // party/tax ledger postings
+    inventoryEntries?: InventoryEntry[]; // stock lines (Purchase/Sales with goods)
     company?: string;        // omit to target the currently open company
     objView?: string;        // 'Accounting Voucher View' (default) or 'Invoice Voucher View'
 }
@@ -33,6 +42,20 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<ISDEEMEDPOSITIVE>${e.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
         + `<AMOUNT>${e.amount.toFixed(2)}</AMOUNT>`
         + '</ALLLEDGERENTRIES.LIST>').join('');
+    const inventory = (v.inventoryEntries || []).map(i =>
+        '<ALLINVENTORYENTRIES.LIST>'
+        + `<STOCKITEMNAME>${esc(i.stockItem)}</STOCKITEMNAME>`
+        + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
+        + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
+        + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+        + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
+        + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
+        + '<ACCOUNTINGALLOCATIONS.LIST>'
+        + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
+        + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
+        + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+        + '</ACCOUNTINGALLOCATIONS.LIST>'
+        + '</ALLINVENTORYENTRIES.LIST>').join('');
     const staticVars = v.company ? `<STATICVARIABLES><SVCURRENTCOMPANY>${esc(v.company)}</SVCURRENTCOMPANY></STATICVARIABLES>` : '';
     return '<ENVELOPE>'
         + '<HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
@@ -47,6 +70,7 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + (v.partyLedger ? `<PARTYLEDGERNAME>${esc(v.partyLedger)}</PARTYLEDGERNAME>` : '')
         + (v.narration ? `<NARRATION>${esc(v.narration)}</NARRATION>` : '')
         + entries
+        + inventory
         + '</VOUCHER></TALLYMESSAGE></REQUESTDATA>'
         + '</IMPORTDATA></BODY></ENVELOPE>';
 }
@@ -55,9 +79,13 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
 export function validateVoucher(v: VoucherInput): string | null {
     if (!v.date || !/^\d{8}$/.test(v.date)) return 'date must be YYYYMMDD';
     if (!v.voucherType) return 'voucherType required';
-    if (!v.entries || v.entries.length < 2) return 'at least two ledger entries required';
+    const inv = v.inventoryEntries || [];
+    if (!v.entries || v.entries.length < 1) return 'at least one ledger entry required';
+    if (v.entries.length < 2 && !inv.length) return 'at least two ledger entries required (or ledger + inventory)';
     for (const e of v.entries) { if (!e.ledger) return 'ledger entry missing ledger name'; if (typeof e.amount !== 'number' || isNaN(e.amount)) return `bad amount for ${e.ledger}`; }
-    const sum = v.entries.reduce((s, e) => s + e.amount, 0);
+    for (const i of inv) { if (!i.stockItem) return 'inventory line missing stock item'; if (!i.unit) return `inventory line ${i.stockItem} missing unit`; if (isNaN(i.amount)) return `bad amount for ${i.stockItem}`; }
+    // balance = ledger postings + inventory accounting allocations must net to 0
+    const sum = v.entries.reduce((s, e) => s + e.amount, 0) + inv.reduce((s, i) => s + i.amount, 0);
     if (Math.abs(sum) > 0.005) return `voucher does not balance (sum ${sum.toFixed(2)}; debits must equal credits)`;
     return null;
 }
@@ -78,4 +106,35 @@ export async function postVoucher(server: string, port: number, v: VoucherInput,
     const ok = errors === 0 && (created > 0 || altered > 0);
     log(`voucher import: created=${created} altered=${altered} errors=${errors}${lineErr ? ' — ' + lineErr : ''}`, !ok);
     return { ok, created, altered, errors, message: lineErr || (ok ? 'ok' : 'no voucher created'), raw: resp };
+}
+
+// --- master prerequisite: ensure a ledger exists before a voucher references it ---
+export async function ledgerExists(server: string, port: number, name: string): Promise<boolean> {
+    try {
+        const xml = buildFetchXmlFiltered('ledger', 'NAME', nameFilter([name]), {});
+        const { rows } = parseCollection(await postTallyXml(server, port, xml, 20000), 'ledger');
+        return rows.some(r => (r.name || '').toLowerCase() === name.toLowerCase());
+    } catch { return false; }
+}
+
+/** Create a ledger under a group via Import (masters). */
+export async function createLedger(server: string, port: number, name: string, parentGroup: string): Promise<ImportResult> {
+    const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
+        + `<LEDGER NAME="${esc(name)}" ACTION="Create"><NAME.LIST><NAME>${esc(name)}</NAME></NAME.LIST><PARENT>${esc(parentGroup)}</PARENT></LEDGER>`
+        + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
+    const resp = await postTallyXml(server, port, xml, 30000);
+    const created = num(resp, 'CREATED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');
+    const lineErr = (resp.match(/<LINEERROR>([^<]*)<\/LINEERROR>/i) || [])[1] || '';
+    return { ok: errors === 0 && created > 0, created, altered: 0, errors, message: lineErr || 'ok', raw: resp };
+}
+
+/** Ensure a ledger exists (create under parentGroup if missing). Returns true if present/created. */
+export async function ensureLedger(server: string, port: number, name: string, parentGroup: string, log?: (m: string, e?: boolean) => void): Promise<boolean> {
+    if (await ledgerExists(server, port, name)) return true;
+    log?.(`ledger '${name}' missing — creating under '${parentGroup}'`);
+    const r = await createLedger(server, port, name, parentGroup);
+    if (!r.ok) log?.(`failed to create ledger '${name}': ${r.message}`, true);
+    return r.ok;
 }
