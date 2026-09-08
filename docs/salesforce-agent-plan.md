@@ -168,6 +168,39 @@ UTF-16LE) is already ours. The real work is the **XML builder per voucher type**
 prerequisite handling**, **balancing/sign logic**, and **response parsing** — all new, and all
 needing careful testing against a throwaway company before any live use.
 
+### Verified voucher-import rules (learned by testing against the sandbox company)
+
+These are empirically confirmed in `src/tallyImport.mts` (all created `created=1, exceptions=0`):
+
+1. **`EFFECTIVEDATE` + `OBJVIEW` are required.** Without them Tally rejects with
+   *"Voucher date is missing … retry Split"* even though `<DATE>` is present.
+2. **Date must be inside the company's open period.** In-period dates import; an out-of-period
+   date gives the same misleading "date is missing" error. (Use the SF date, mapped to YYYYMMDD.)
+3. **Ledger-entry tag depends on the view — this was the big one:**
+   - **Accounting Voucher View** (no stock): party/ledger postings use `<ALLLEDGERENTRIES.LIST>`.
+   - **Invoice Voucher View** (has stock lines): party/tax postings use **`<LEDGERENTRIES.LIST>`**,
+     and stock lines go in `<ALLINVENTORYENTRIES.LIST>` (each with `<ACCOUNTINGALLOCATIONS.LIST>`
+     to the Purchase/Sales ledger). Using `ALLLEDGERENTRIES` in invoice view → bare `EXCEPTION`,
+     no line error. `buildVoucherImportXml` now picks the tag automatically.
+4. **Signs:** `<ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>` = debit (negative amount); `No` = credit
+   (positive). Debits must equal credits (ledger postings + inventory accounting allocations net to 0).
+5. **GST is connector-computed (decision):** stock items here are GST-applicable, so a stock line
+   alone makes Tally attempt tax auto-calc. We add explicit tax ledger lines — e.g. intra-state 18%
+   → `Input CGST @ 9%` + `Input SGST @ 9%` (debits), party credited for taxable+tax. (Inter-state →
+   `Input IGST …`.) Tax ledger names + intra/inter rule are config.
+6. **Inventory line format:** `<RATE>5250.00/MT</RATE>`, `<ACTUALQTY>10.00 MT</ACTUALQTY>`,
+   `<BILLEDQTY>…</BILLEDQTY>` — the unit must match the stock item's base unit.
+7. **Master prerequisite:** `ensureLedger()` creates a missing ledger (e.g. supplier *Morde Foods*
+   under *Sundry Creditors*) via a master Import before the voucher references it.
+8. **Response:** `<CREATED>/<ALTERED>/<ERRORS>/<EXCEPTIONS>`; `EXCEPTIONS>0` with no `<LINEERROR>`
+   means a structural/tax rejection (not a plain error) — the hard-to-debug case above.
+
+**Order → Purchase (Morde):** a Salesforce **Primary Order** (RecordType on standard `Order`,
+`Distributor_Customer__c` = an Account) means the distributor is buying from Morde → a **Purchase**
+in the distributor's Tally. Because the connector runs on a **Salesforce Integration license** (can't
+read standard `Order`), Morde's Flow copies Activated Primary Orders into `Tally_Purchase__c`
+(+ `Tally_Purchase_Line__c`); the connector reads that staging and imports the Purchase voucher.
+
 ## Security
 
 - Per-distributor **OAuth** (Connected App), **TLS 1.2+** (Node's own OpenSSL, OS-independent).
