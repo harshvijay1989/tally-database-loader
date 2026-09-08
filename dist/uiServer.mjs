@@ -64,6 +64,9 @@ function loadClient() {
 }
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/google/callback`;
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+// Salesforce OAuth (refresh-token flow) — the per-distributor agent auth (see docs/salesforce-agent-plan.md)
+const SF_REDIRECT_URI = `http://localhost:${PORT}/oauth/salesforce/callback`;
+const SF_SCOPE = 'api refresh_token offline_access';
 function ensureMapDir() { if (!fs.existsSync(MAP_DIR))
     fs.mkdirSync(MAP_DIR); }
 function mapSlug(name) { return (String(name).replace(/[^a-zA-Z0-9 _-]/g, '').trim()) || 'mapping'; }
@@ -124,6 +127,29 @@ async function sfUsername(auth) {
     catch {
         return '';
     }
+}
+// --- Salesforce auth (OAuth refresh-token; the agent's per-distributor auth) ---
+// Separate from the client-credentials sfAuth above (used by the current one-way
+// export). The two-way agent uses this: a one-time browser sign-in yields a refresh
+// token, exchanged here for short-lived access tokens. Returns the token + the org's
+// instance URL (API calls go to instance_url, auth to loginUrl / My Domain).
+let sfoCache = null;
+async function salesforceOAuthToken(force = false) {
+    const s = loadConn().salesforce;
+    if (!s.clientId || !s.clientSecret || !s.refreshToken)
+        return null;
+    if (!force && sfoCache && Date.now() < sfoCache.expires - 60000)
+        return { token: sfoCache.token, instanceUrl: sfoCache.instanceUrl };
+    const loginUrl = (s.loginUrl || 'https://login.salesforce.com').replace(/\/$/, '');
+    const body = new URLSearchParams({ grant_type: 'refresh_token', client_id: s.clientId, client_secret: s.clientSecret, refresh_token: s.refreshToken });
+    const resp = await httpFetch(`${loginUrl}/services/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.access_token) {
+        logLine(`Salesforce token refresh failed - ${data.error_description || data.error || resp.status}`, true);
+        return null;
+    }
+    sfoCache = { token: data.access_token, instanceUrl: data.instance_url || s.instanceUrl || loginUrl, expires: Date.now() + 90 * 60 * 1000 };
+    return { token: sfoCache.token, instanceUrl: sfoCache.instanceUrl };
 }
 // --- Google auth (OAuth browser sign-in) ------------------------------------
 let gCache = null;
@@ -644,7 +670,7 @@ const server = http.createServer(async (req, res) => {
             const c = loadConn();
             // return everything except never echo secrets back in the clear; send a flag instead
             return json(200, {
-                salesforce: { instanceUrl: c.salesforce.instanceUrl || '', clientId: c.salesforce.clientId || '', apiVersion: c.salesforce.apiVersion || '62.0', hasSecret: !!c.salesforce.clientSecret },
+                salesforce: { instanceUrl: c.salesforce.instanceUrl || '', loginUrl: c.salesforce.loginUrl || '', clientId: c.salesforce.clientId || '', apiVersion: c.salesforce.apiVersion || '62.0', hasSecret: !!c.salesforce.clientSecret, connected: !!c.salesforce.refreshToken },
                 google: { clientId: c.google.clientId || '', folderId: c.google.folderId || '', hasSecret: !!c.google.clientSecret, connected: !!c.google.refreshToken }
             });
         }
@@ -654,12 +680,15 @@ const server = http.createServer(async (req, res) => {
             const b = JSON.parse(await readBody(req));
             const c = loadConn();
             c.salesforce.instanceUrl = (b.instanceUrl || '').trim();
+            if (b.loginUrl != null)
+                c.salesforce.loginUrl = (b.loginUrl || '').trim();
             c.salesforce.clientId = (b.clientId || '').trim();
             if (b.clientSecret)
                 c.salesforce.clientSecret = b.clientSecret.trim(); // keep existing if blank
             c.salesforce.apiVersion = (b.apiVersion || '62.0').replace(/^v/, '');
             saveConn(c);
             sfCache = null;
+            sfoCache = null;
             logLine(`Salesforce connection settings saved (${c.salesforce.instanceUrl})`);
             return json(200, { saved: true });
         }
@@ -729,6 +758,47 @@ const server = http.createServer(async (req, res) => {
             saveConn(c);
             gCache = null;
             logLine('Google disconnected');
+            return json(200, { connected: false });
+        }
+        // --- Salesforce OAuth browser flow (refresh-token; agent auth) ---
+        if (url.pathname === '/api/salesforce/auth-url') {
+            const s = loadConn().salesforce;
+            if (!s.clientId || !s.clientSecret)
+                return json(400, { error: 'Enter Salesforce Consumer Key + Secret (and Login URL) first' });
+            const loginUrl = (s.loginUrl || 'https://login.salesforce.com').replace(/\/$/, '');
+            const p = new URLSearchParams({ response_type: 'code', client_id: s.clientId, redirect_uri: SF_REDIRECT_URI, scope: SF_SCOPE, prompt: 'login' });
+            return json(200, { url: `${loginUrl}/services/oauth2/authorize?${p.toString()}` });
+        }
+        if (url.pathname === '/oauth/salesforce/callback') {
+            const code = url.searchParams.get('code');
+            const err = url.searchParams.get('error');
+            if (err || !code)
+                return send(200, 'text/html', `<h2>Salesforce sign-in cancelled</h2><p>${err || 'no code returned'}. You can close this tab.</p>`);
+            const s = loadConn().salesforce;
+            const loginUrl = (s.loginUrl || 'https://login.salesforce.com').replace(/\/$/, '');
+            const body = new URLSearchParams({ grant_type: 'authorization_code', code, client_id: s.clientId, client_secret: s.clientSecret, redirect_uri: SF_REDIRECT_URI });
+            const tok = await (await httpFetch(`${loginUrl}/services/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).json().catch(() => ({}));
+            if (tok.refresh_token) {
+                const c = loadConn();
+                c.salesforce.refreshToken = tok.refresh_token;
+                if (tok.instance_url)
+                    c.salesforce.instanceUrl = tok.instance_url;
+                saveConn(c);
+                sfoCache = null;
+                logLine('Salesforce connected via browser sign-in');
+            }
+            else
+                logLine(`Salesforce sign-in returned no refresh token — ${tok.error_description || tok.error || 'unknown'}`, true);
+            const okHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#16a34a">✓ Salesforce connected</h2><p>You can close this tab and return to the connector.</p><script>setTimeout(()=>window.close(),1200)</script></body>`;
+            const failHtml = `<body style="font:16px system-ui;text-align:center;padding-top:60px"><h2 style="color:#b42318">Salesforce sign-in failed</h2><p>${tok.error_description || tok.error || 'no refresh token returned'}</p></body>`;
+            return send(200, 'text/html', tok.refresh_token ? okHtml : failHtml);
+        }
+        if (url.pathname === '/api/salesforce/oauth-disconnect' && req.method === 'POST') {
+            const c = loadConn();
+            c.salesforce.refreshToken = '';
+            saveConn(c);
+            sfoCache = null;
+            logLine('Salesforce OAuth disconnected');
             return json(200, { connected: false });
         }
         // --- Tally source location (server + port) ---
