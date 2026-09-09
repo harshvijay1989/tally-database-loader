@@ -73,6 +73,20 @@ export async function sfInsert(object, records) {
     }
     return out;
 }
+/** Update one record by its Salesforce Id (PATCH). */
+export async function sfUpdate(object, id, fields) {
+    let a = await sfAuth();
+    const doReq = (auth) => httpFetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/sobjects/${object}/${id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(fields) });
+    let r = await doReq(a);
+    if (r.status === 401) {
+        a = await sfAuth(true);
+        r = await doReq(a);
+    }
+    if (!r.ok && r.status !== 204) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(`update ${object}/${id} failed: ${JSON.stringify(d).slice(0, 200)}`);
+    }
+}
 /** Upsert records by external id via Composite sObject Collections (<=200 per call). */
 export async function sfUpsert(object, externalIdField, records, log) {
     const res = { success: 0, failed: 0, errors: [] };
