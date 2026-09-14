@@ -86,6 +86,8 @@ foreach ($f in @(
 }
 # runtime launcher, renamed to a user-friendly name
 Copy-Item (Join-Path $installer 'launcher.bat') (Join-Path $payload 'start-connector.bat') -Force
+# silent auto-start launcher (used by the Startup-folder shortcut)
+Copy-Item (Join-Path $installer 'launcher-hidden.vbs') (Join-Path $payload 'start-connector-hidden.vbs') -Force
 
 # optional per-client lockdown profile (committed, no secrets)
 $clientJson = Join-Path $repo 'client.json'

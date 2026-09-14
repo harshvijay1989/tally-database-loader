@@ -47,6 +47,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
+; Auto-start is what keeps the self-running sync scheduler alive without anyone
+; launching the app. Checked by default; runs silently at sign-in (no window).
+Name: "autostart"; Description: "Start the connector automatically when I sign in (keeps scheduled syncs running)"; GroupDescription: "Auto-start:"
 
 [Files]
 ; The full staged app: dist, production node_modules, webui, portable node
@@ -57,6 +60,8 @@ Source: "build\payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubd
 Name: "{group}\{#MyAppName}";        Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\node\node.exe"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\node\node.exe"; Tasks: desktopicon
+; Silent auto-start at sign-in (per-user Startup folder) -> runs start-connector-hidden.vbs.
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\start-connector-hidden.vbs"; WorkingDir: "{app}"; IconFilename: "{app}\node\node.exe"; Tasks: autostart
 
 [Run]
 ; Offer to launch right after install.
