@@ -7,6 +7,8 @@ import * as tallyLive from './tallyLive.mjs';
 import { httpFetch } from './httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
 import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP code against Account.SAP_Company_Code__c
 import * as scheduler from './scheduler.mjs'; // self-running in-connector sync scheduler
+import { loadMappings, getOverride, setOverride, type OverrideRow } from './sfMapping.mjs'; // per-distributor local mapping edits
+import { bakedSapCode } from './syncRunner.mjs';
 
 // App version (for logs), read from package.json; falls back if unreadable.
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
@@ -630,6 +632,34 @@ const server = http.createServer(async (req, res) => {
             saveConn(c); gCache = null;
             logLine(`Google connection settings saved${c.google.folderId ? ` (folder ${c.google.folderId})` : ''}`);
             return json(200, { saved: true });
+        }
+
+        // --- Field mappings (effective = Salesforce defaults + local edits) ---
+        if (url.pathname === '/api/mappings' && req.method === 'GET') {
+            const object = url.searchParams.get('object') || 'Invoice';
+            const direction = url.searchParams.get('direction') || 'ToSalesforce';
+            try {
+                const rows = await loadMappings(object, direction, bakedSapCode() || undefined);
+                return json(200, { object, direction, rows, overrides: getOverride(object, direction) });
+            } catch (e: any) { return json(200, { object, direction, rows: [], overrides: {}, error: String(e?.message || e) }); }
+        }
+        if (url.pathname === '/api/mappings' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            const object = String(b.object || ''), direction = String(b.direction || '');
+            if (!object || !direction) return json(400, { error: 'object and direction required' });
+            const ov: Record<string, OverrideRow> = {};
+            for (const r of (b.rows || [])) {
+                if (!r.target) continue;
+                ov[r.target] = { source: r.source || '', transform: r.transform || '', active: r.active !== false };
+            }
+            setOverride(object, direction, ov);
+            logLine(`Local mapping override saved for ${object}/${direction} (${Object.keys(ov).length} rows)`);
+            return json(200, { saved: true });
+        }
+        if (url.pathname === '/api/mappings/reset' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            setOverride(String(b.object || ''), String(b.direction || ''), {}); // clear local edits -> back to SF defaults
+            return json(200, { reset: true });
         }
 
         // --- Scheduler (self-running sync) ---

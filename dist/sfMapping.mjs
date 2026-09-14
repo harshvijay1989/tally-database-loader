@@ -1,4 +1,45 @@
+import fs from 'node:fs';
 import { sfQuery } from './sfClient.mjs';
+// --- Local overrides (edited in the connector, stored on this machine) ---------
+const OVERRIDES_FILE = './mapping-overrides.json';
+const okey = (objectType, direction) => `${objectType}|${direction}`;
+export function loadOverrides() {
+    try {
+        return JSON.parse(fs.readFileSync(OVERRIDES_FILE, 'utf8')) || {};
+    }
+    catch {
+        return {};
+    }
+}
+export function saveOverrides(store) {
+    fs.writeFileSync(OVERRIDES_FILE, JSON.stringify(store, null, 2));
+}
+/** Get the local override rows for one object+direction (empty if none). */
+export function getOverride(objectType, direction) {
+    return loadOverrides()[okey(objectType, direction)] || {};
+}
+/** Save local override rows for one object+direction. */
+export function setOverride(objectType, direction, rows) {
+    const store = loadOverrides();
+    store[okey(objectType, direction)] = rows;
+    saveOverrides(store);
+}
+/** Merge local overrides over a set of SF default maps (local wins, keyed by target). */
+function mergeOverrides(objectType, direction, sfMaps) {
+    const ov = getOverride(objectType, direction);
+    if (!Object.keys(ov).length)
+        return sfMaps;
+    const byTarget = new Map(sfMaps.map(m => [m.target, { ...m }]));
+    for (const [target, row] of Object.entries(ov)) {
+        if (row.active === false) {
+            byTarget.delete(target);
+            continue;
+        } // distributor disabled this row
+        const base = byTarget.get(target) || { target };
+        byTarget.set(target, { ...base, source: row.source ?? base.source, transform: row.transform ?? base.transform });
+    }
+    return [...byTarget.values()];
+}
 /**
  * Download the active mappings for one object + direction, in sort order. Scoped to this
  * distributor by SAP code: a per-distributor override (Account set to this code) plus the
@@ -16,7 +57,7 @@ export async function loadMappings(objectType, direction, sapCode) {
     // Keep the query's Sort_Order; just drop defaults whose target has an override, and any dupes.
     const overridden = new Set(rows.filter(r => r.Account__c).map(r => r.Target_Field__c));
     const seen = new Set();
-    return rows.filter(r => {
+    const sfMaps = rows.filter(r => {
         if (!r.Target_Field__c)
             return false;
         if (!r.Account__c && overridden.has(r.Target_Field__c))
@@ -31,6 +72,8 @@ export async function loadMappings(objectType, direction, sapCode) {
         constant: (r.Constant_Value__c != null && r.Constant_Value__c !== '') ? r.Constant_Value__c : undefined,
         transform: r.Transform__c || undefined,
     }));
+    // Apply this machine's local edits over the Salesforce defaults.
+    return mergeOverrides(objectType, direction, sfMaps);
 }
 /** Apply a single transform token to a value. Extend as new transforms are needed. */
 export function applyTransform(v, t) {

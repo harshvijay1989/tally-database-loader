@@ -132,6 +132,7 @@
   <div class="appbar-right">
     <span id="sfStatus" class="status"><span class="dot"></span><span id="sfStatusText">Salesforce</span></span>
     <span id="gStatus" class="status"><span class="dot"></span><span id="gStatusText">Google Drive</span></span>
+    <button class="ghost" onclick="openMappings()">🗺 Mappings</button>
     <button class="ghost" onclick="openScheduler()">⏱ Scheduler</button>
     <button class="ghost" onclick="openLogs()">📋 Logs</button>
     <button class="ghost" onclick="openConnections()">⚙ Connections</button>
@@ -205,6 +206,26 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Mappings modal -->
+<div id="mapModal" class="modal hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal-card" style="max-width:820px">
+    <h3>Field Mappings</h3>
+    <p class="sub">Defaults are shipped from Salesforce. Edit the <b>Source (your Tally field)</b> and Transform for your setup — saved on this machine and applied on the next sync. The Salesforce target field is fixed.</p>
+    <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:12px">
+      <div class="frow" style="max-width:180px"><label>Object</label><select id="mapObj" onchange="loadMap()"><option>Invoice</option><option>Purchase</option><option>Order</option><option>Note</option></select></div>
+      <div class="frow" style="max-width:200px"><label>Direction</label><select id="mapDir" onchange="loadMap()"><option value="ToSalesforce">Tally → Salesforce</option><option value="ToTally">Salesforce → Tally</option></select></div>
+      <span id="mapInfo" class="connstat" style="margin-bottom:11px"></span>
+    </div>
+    <div style="overflow-x:auto"><table id="mapEditTable" style="width:100%;border-collapse:collapse;font-size:13px"></table></div>
+    <div class="connfoot" style="margin-top:14px">
+      <button onclick="saveMap()">Save my edits</button>
+      <button class="ghost" onclick="resetMap()">Reset to Salesforce default</button>
+      <span id="mapSaveMsg" class="connstat"></span>
+    </div>
+    <div style="text-align:right;margin-top:10px"><button class="ghost" onclick="document.getElementById('mapModal').classList.add('hidden')">Close</button></div>
   </div>
 </div>
 
@@ -400,6 +421,49 @@ function applyDestChrome(){
 }
 
 // ---- Connections modal ----
+const XFORMS=['','tallydate','sfdate','number','bool','upper','lower','trim','abs'];
+async function openMappings(){ document.getElementById('mapModal').classList.remove('hidden'); await loadMap(); }
+async function loadMap(){
+  const obj=document.getElementById('mapObj').value, dir=document.getElementById('mapDir').value;
+  const t=document.getElementById('mapEditTable'), info=document.getElementById('mapInfo');
+  info.textContent='Loading…'; t.innerHTML='';
+  try{
+    const d=await (await fetch('/api/mappings?object='+encodeURIComponent(obj)+'&direction='+encodeURIComponent(dir))).json();
+    const ov=d.overrides||{};
+    info.textContent=(d.rows||[]).length+' fields'+(Object.keys(ov).length?' · '+Object.keys(ov).length+' edited locally':'')+(d.error?(' · '+d.error):'');
+    const srcHdr=dir==='ToSalesforce'?'Source (Tally field)':'Source (Salesforce field)';
+    const tgtHdr=dir==='ToSalesforce'?'Target (Salesforce field)':'Target (Tally logical field)';
+    t.innerHTML='<tr style="text-align:left;border-bottom:1px solid #e5e7eb"><th style="padding:6px">'+tgtHdr+'</th><th>'+srcHdr+'</th><th>Transform</th><th>On</th></tr>'
+      +(d.rows||[]).map((r,i)=>{
+        const opts=XFORMS.map(x=>`<option value="${x}"${(r.transform||'')===x?' selected':''}>${x||'(none)'}</option>`).join('');
+        const edited=ov[r.target]?' style="background:#fffbeb"':'';
+        return `<tr data-target="${r.target}"${edited}><td style="padding:6px"><b>${r.target}</b></td>`
+          +`<td><input class="mapSrc" value="${(r.source||'').replace(/"/g,'&quot;')}" placeholder="${r.constant?'(constant: '+r.constant+')':'tally field'}" style="width:180px;padding:3px 6px"></td>`
+          +`<td><select class="mapXf">${opts}</select></td>`
+          +`<td style="text-align:center"><input type="checkbox" class="mapOn" checked></td></tr>`;
+      }).join('');
+  }catch(e){ info.textContent='Could not load mappings.'; }
+}
+async function saveMap(){
+  const obj=document.getElementById('mapObj').value, dir=document.getElementById('mapDir').value;
+  const m=document.getElementById('mapSaveMsg'); m.textContent='Saving…'; m.className='connstat';
+  const rows=[...document.querySelectorAll('#mapEditTable tr[data-target]')].map(tr=>({
+    target:tr.getAttribute('data-target'),
+    source:tr.querySelector('.mapSrc').value.trim(),
+    transform:tr.querySelector('.mapXf').value,
+    active:tr.querySelector('.mapOn').checked
+  }));
+  try{ await fetch('/api/mappings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:obj,direction:dir,rows})});
+    m.textContent='✓ saved — applies next sync'; m.className='connstat ok'; await loadMap();
+  }catch(e){ m.textContent='✕ failed'; m.className='connstat bad'; }
+}
+async function resetMap(){
+  const obj=document.getElementById('mapObj').value, dir=document.getElementById('mapDir').value;
+  const m=document.getElementById('mapSaveMsg'); m.textContent='Resetting…'; m.className='connstat';
+  try{ await fetch('/api/mappings/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:obj,direction:dir})});
+    m.textContent='✓ back to Salesforce default'; m.className='connstat ok'; await loadMap();
+  }catch(e){ m.textContent='✕ failed'; m.className='connstat bad'; }
+}
 async function openScheduler(){ document.getElementById('schedModal').classList.remove('hidden'); await loadScheduler(); }
 async function loadScheduler(){
   const t=document.getElementById('schedTable'), sum=document.getElementById('schedSummary');

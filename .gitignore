@@ -23,3 +23,4 @@ mappings/
 
 # local POC uploader with baked Google token — never commit (contains a secret)
 drive-upload.mjs
+mapping-overrides.json
