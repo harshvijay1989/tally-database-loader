@@ -6,6 +6,7 @@ import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
 import { httpFetch } from './httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
 import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP code against Account.SAP_Company_Code__c
+import * as scheduler from './scheduler.mjs'; // self-running in-connector sync scheduler
 
 // App version (for logs), read from package.json; falls back if unreadable.
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
@@ -631,6 +632,22 @@ const server = http.createServer(async (req, res) => {
             return json(200, { saved: true });
         }
 
+        // --- Scheduler (self-running sync) ---
+        if (url.pathname === '/api/scheduler/status' && req.method === 'GET') {
+            return json(200, await scheduler.schedulerStatus());
+        }
+        if (url.pathname === '/api/scheduler/run' && req.method === 'POST') {
+            const b = await readBody(req).then(s => s ? JSON.parse(s) : {}).catch(() => ({}));
+            const tc = loadTallyConfig();
+            const reports = await scheduler.runNow(() => ({ server: tc.server, port: tc.port }), logLine, b.object || undefined);
+            return json(200, { ran: true, reports });
+        }
+        if (url.pathname === '/api/scheduler/toggle' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            scheduler.setEnabled(!!b.enabled);
+            return json(200, { enabled: !!b.enabled });
+        }
+
         // --- Distributor identity (SAP company code) ---
         if (url.pathname === '/api/distributor' && req.method === 'GET') {
             return json(200, { sapCode: loadConn().distributor.sapCode || '' });
@@ -933,5 +950,7 @@ server.listen(PORT, HOST, () => {
     // Guarded to skip when nothing new was logged, so an idle connector stays quiet.
     pushLogToDrive(true).catch(() => { });                                  // create/refresh the file at startup
     setInterval(() => { pushLogToDrive().catch(() => { }); }, 20000);       // then keep it fresh
+    // Start the self-running sync scheduler (Tally host normalized like runSync — see 127.0.0.1 note).
+    scheduler.startScheduler(() => { const tc = loadTallyConfig(); return { server: (!tc.server || tc.server === 'localhost') ? '127.0.0.1' : tc.server, port: tc.port }; }, logLine);
     if (!process.env.NO_OPEN) child_process.exec(`start http://localhost:${PORT}`);
 });

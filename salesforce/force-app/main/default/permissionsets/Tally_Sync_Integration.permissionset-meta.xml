@@ -933,6 +933,16 @@
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Schedule_Type__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Daily_Time__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
     <tabSettings>
         <tab>Tally_Order__c</tab>
         <visibility>Visible</visibility>

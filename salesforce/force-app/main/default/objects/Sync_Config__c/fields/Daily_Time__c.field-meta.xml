@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Daily_Time__c</fullName>
+    <label>Daily Time (HH:MM)</label>
+    <description>For Schedule Type = Daily: the time of day (24h HH:MM, connector local time) to run, e.g. 19:00 for 7 PM.</description>
+    <length>5</length>
+    <type>Text</type>
+    <required>false</required>
+</CustomField>

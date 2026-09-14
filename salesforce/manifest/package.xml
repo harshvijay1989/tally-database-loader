@@ -15,6 +15,7 @@
         <members>Field_Mapping__c.Target_Field__c</members>
         <members>Field_Mapping__c.Transform__c</members>
         <members>Sync_Config__c.Account__c</members>
+        <members>Sync_Config__c.Daily_Time__c</members>
         <members>Sync_Config__c.Debug__c</members>
         <members>Sync_Config__c.Direction__c</members>
         <members>Sync_Config__c.Enabled__c</members>
@@ -25,6 +26,7 @@
         <members>Sync_Config__c.Object_Type__c</members>
         <members>Sync_Config__c.Retry_Enabled__c</members>
         <members>Sync_Config__c.Retry_Interval_Minutes__c</members>
+        <members>Sync_Config__c.Schedule_Type__c</members>
         <members>Tally_Invoice_Line__c.Accounting_Ledger__c</members>
         <members>Tally_Invoice_Line__c.Amount__c</members>
         <members>Tally_Invoice_Line__c.Discount__c</members>
@@ -166,6 +168,7 @@
         <members>Tally_Purchase__c.State_Name__c</members>
         <members>Tally_Purchase__c.Supplier__c</members>
         <members>Tally_Purchase__c.Sync_Status__c</members>
+        <members>Tally_Purchase__c.Tally_AlterId__c</members>
         <members>Tally_Purchase__c.Tally_Guid__c</members>
         <members>Tally_Purchase__c.Tally_Voucher_Number__c</members>
         <members>Tally_Purchase__c.Voucher_Date__c</members>
