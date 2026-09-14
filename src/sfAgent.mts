@@ -217,11 +217,23 @@ export async function syncToSalesforce(
 // stays in Salesforce. partySign: sign of the party ledger amount (neg=debit, pos=credit).
 // qtySign: inventory movement (-1 outward/sale, +1 inward/purchase). Groups are used to
 // auto-create the party / sales-purchase ledgers if they don't exist yet in Tally.
-interface ToTallyRule { voucherType: string; counterLedgerDefault: string; partySign: 1 | -1; qtySign: 1 | -1; partyGroup: string; counterGroup: string; }
+interface ToTallyRule { voucherType: string; counterLedgerDefault: string; partySign: 1 | -1; qtySign: 1 | -1; partyGroup: string; counterGroup: string; order?: boolean; }
 const TO_TALLY_RULES: Record<string, ToTallyRule> = {
     Invoice: { voucherType: 'Sales', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
     Purchase: { voucherType: 'Purchase', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
+    // Credit Note: customer credited (reduce receivable), goods come back in.
+    CreditNote: { voucherType: 'Credit Note', counterLedgerDefault: 'Sales', partySign: 1, qtySign: 1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
+    // Debit Note: supplier debited (reduce payable), goods go back out.
+    DebitNote: { voucherType: 'Debit Note', counterLedgerDefault: 'Purchase', partySign: -1, qtySign: -1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
+    // Sales Order: inventory-only order voucher, NO accounting impact (needs Order Processing in Tally).
+    Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
 };
+
+/** Resolve the accounting rule for a staging object; Note branches on its Credit/Debit type. */
+function ruleFor(objectType: string, logical: Record<string, any>): ToTallyRule | undefined {
+    if (objectType === 'Note') return String(logical.noteType || '').toLowerCase().includes('debit') ? TO_TALLY_RULES.DebitNote : TO_TALLY_RULES.CreditNote;
+    return TO_TALLY_RULES[objectType];
+}
 
 export interface LogicalLine { stockItem?: string; productSapId?: string; qty?: any; unit?: string; rate?: any; amount?: any; ledger?: string; }
 
@@ -232,7 +244,7 @@ export interface LogicalLine { stockItem?: string; productSapId?: string; qty?: 
  * from the line total, so the voucher always balances.
  */
 export function assembleVoucher(objectType: string, logical: Record<string, any>, lines: LogicalLine[], itemBySap: Map<string, { name: string; unit: string }>): VoucherInput | string {
-    const rule = TO_TALLY_RULES[objectType];
+    const rule = ruleFor(objectType, logical);
     if (!rule) return `no ToTally rule for ${objectType} (SF->Tally not supported for this type yet)`;
     if (!logical.party) return 'missing party';
     if (!/^\d{8}$/.test(String(logical.date || ''))) return `bad date '${logical.date}' (need YYYYMMDD)`;
@@ -253,9 +265,23 @@ export function assembleVoucher(objectType: string, logical: Record<string, any>
         lineTotal += amt;
         inventoryEntries.push({
             stockItem, unit, qty: rule.qtySign * qty, rate: num(ln.rate),
-            amount: -rule.partySign * amt,                 // opposite side of the party posting
+            // Order vouchers carry no accounting impact; transactional vouchers post the opposite side.
+            amount: rule.order ? amt : -rule.partySign * amt,
             accountingLedger: String(ln.ledger || counter),
         });
+    }
+
+    const voucherType = String(logical.voucherType || rule.voucherType);
+
+    // Order voucher: inventory-only, no ledger postings (requires Order Processing in Tally).
+    // Let Tally auto-number the order (a passed VOUCHERNUMBER trips "Bad Order Number").
+    if (rule.order) {
+        if (!inventoryEntries.length) return 'order has no line items';
+        return {
+            date: String(logical.date), voucherType, partyLedger: party,
+            narration: logical.narration ? String(logical.narration) : undefined,
+            entries: [], inventoryEntries, objView: 'Invoice Voucher View',
+        };
     }
 
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -265,7 +291,7 @@ export function assembleVoucher(objectType: string, logical: Record<string, any>
     if (!lines.length) entries.push({ ledger: counter, amount: -partyAmt }); // no inventory -> plain 2-line accounting voucher
 
     return {
-        date: String(logical.date), voucherType: String(logical.voucherType || rule.voucherType), partyLedger: party,
+        date: String(logical.date), voucherType, partyLedger: party,
         voucherNumber: logical.number ? String(logical.number) : undefined,
         narration: logical.narration ? String(logical.narration) : undefined,
         entries, inventoryEntries: inventoryEntries.length ? inventoryEntries : undefined,
@@ -317,8 +343,7 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
-    const rule = TO_TALLY_RULES[spec.objectType];
-    if (!rule) { log(`[agent] SF->Tally not supported for ${spec.objectType} yet`, true); return { pending: 0, created: 0, failed: 0, errors: [`no rule for ${spec.objectType}`] }; }
+    if (!['Invoice', 'Purchase', 'Order', 'Note'].includes(spec.objectType)) { log(`[agent] SF->Tally not supported for ${spec.objectType} yet`, true); return { pending: 0, created: 0, failed: 0, errors: [`no rule for ${spec.objectType}`] }; }
     const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapCode);
     if (!maps.length) { log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true); return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] }; }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source!))];
@@ -346,10 +371,13 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
             continue;
         }
         // Master prerequisites: party + counter ledgers must exist (create if missing).
+        const rule = ruleFor(spec.objectType, logical)!;
         if (!opts.dryRun) {
             await ensureLedger(server, port, built.partyLedger!, rule.partyGroup, log);
-            const counters = new Set([rule.counterLedgerDefault, ...(built.inventoryEntries || []).map(i => i.accountingLedger)]);
-            for (const c of counters) await ensureLedger(server, port, c, rule.counterGroup, log);
+            if (!rule.order) { // order vouchers have no ledger postings
+                const counters = new Set([rule.counterLedgerDefault, ...(built.inventoryEntries || []).map(i => i.accountingLedger)]);
+                for (const c of counters) await ensureLedger(server, port, c, rule.counterGroup, log);
+            }
         }
         const pr = await postVoucher(server, port, built, { dryRun: opts.dryRun, log: (m, e) => log('  ' + m, e) });
         if (pr.ok) {

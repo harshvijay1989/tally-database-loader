@@ -59,11 +59,16 @@ export function validateVoucher(v) {
     if (!v.voucherType)
         return 'voucherType required';
     const inv = v.inventoryEntries || [];
-    if (!v.entries || v.entries.length < 1)
-        return 'at least one ledger entry required';
-    if (v.entries.length < 2 && !inv.length)
-        return 'at least two ledger entries required (or ledger + inventory)';
-    for (const e of v.entries) {
+    const entries = v.entries || [];
+    // Order vouchers (inventory only, no accounting) legitimately have zero ledger entries.
+    const orderStyle = entries.length === 0 && inv.length > 0;
+    if (!orderStyle) {
+        if (entries.length < 1)
+            return 'at least one ledger entry required';
+        if (entries.length < 2 && !inv.length)
+            return 'at least two ledger entries required (or ledger + inventory)';
+    }
+    for (const e of entries) {
         if (!e.ledger)
             return 'ledger entry missing ledger name';
         if (typeof e.amount !== 'number' || isNaN(e.amount))
@@ -77,10 +82,12 @@ export function validateVoucher(v) {
         if (isNaN(i.amount))
             return `bad amount for ${i.stockItem}`;
     }
-    // balance = ledger postings + inventory accounting allocations must net to 0
-    const sum = v.entries.reduce((s, e) => s + e.amount, 0) + inv.reduce((s, i) => s + i.amount, 0);
-    if (Math.abs(sum) > 0.005)
-        return `voucher does not balance (sum ${sum.toFixed(2)}; debits must equal credits)`;
+    // balance = ledger postings + inventory accounting allocations must net to 0 (skip for order-only vouchers)
+    if (!orderStyle) {
+        const sum = entries.reduce((s, e) => s + e.amount, 0) + inv.reduce((s, i) => s + i.amount, 0);
+        if (Math.abs(sum) > 0.005)
+            return `voucher does not balance (sum ${sum.toFixed(2)}; debits must equal credits)`;
+    }
     return null;
 }
 const num = (xml, tag) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };

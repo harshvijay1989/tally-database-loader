@@ -1299,6 +1299,18 @@
       "Constant_Value__c": "Purchase",
       "Active__c": true,
       "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_note_tt_type"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Note_Type__c",
+      "Target_Field__c": "noteType",
+      "Active__c": true,
+      "Sort_Order__c": 6
     }
   ]
 }

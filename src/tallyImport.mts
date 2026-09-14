@@ -86,13 +86,20 @@ export function validateVoucher(v: VoucherInput): string | null {
     if (!v.date || !/^\d{8}$/.test(v.date)) return 'date must be YYYYMMDD';
     if (!v.voucherType) return 'voucherType required';
     const inv = v.inventoryEntries || [];
-    if (!v.entries || v.entries.length < 1) return 'at least one ledger entry required';
-    if (v.entries.length < 2 && !inv.length) return 'at least two ledger entries required (or ledger + inventory)';
-    for (const e of v.entries) { if (!e.ledger) return 'ledger entry missing ledger name'; if (typeof e.amount !== 'number' || isNaN(e.amount)) return `bad amount for ${e.ledger}`; }
+    const entries = v.entries || [];
+    // Order vouchers (inventory only, no accounting) legitimately have zero ledger entries.
+    const orderStyle = entries.length === 0 && inv.length > 0;
+    if (!orderStyle) {
+        if (entries.length < 1) return 'at least one ledger entry required';
+        if (entries.length < 2 && !inv.length) return 'at least two ledger entries required (or ledger + inventory)';
+    }
+    for (const e of entries) { if (!e.ledger) return 'ledger entry missing ledger name'; if (typeof e.amount !== 'number' || isNaN(e.amount)) return `bad amount for ${e.ledger}`; }
     for (const i of inv) { if (!i.stockItem) return 'inventory line missing stock item'; if (!i.unit) return `inventory line ${i.stockItem} missing unit`; if (isNaN(i.amount)) return `bad amount for ${i.stockItem}`; }
-    // balance = ledger postings + inventory accounting allocations must net to 0
-    const sum = v.entries.reduce((s, e) => s + e.amount, 0) + inv.reduce((s, i) => s + i.amount, 0);
-    if (Math.abs(sum) > 0.005) return `voucher does not balance (sum ${sum.toFixed(2)}; debits must equal credits)`;
+    // balance = ledger postings + inventory accounting allocations must net to 0 (skip for order-only vouchers)
+    if (!orderStyle) {
+        const sum = entries.reduce((s, e) => s + e.amount, 0) + inv.reduce((s, i) => s + i.amount, 0);
+        if (Math.abs(sum) > 0.005) return `voucher does not balance (sum ${sum.toFixed(2)}; debits must equal credits)`;
+    }
     return null;
 }
 
