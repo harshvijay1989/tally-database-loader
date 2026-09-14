@@ -141,8 +141,12 @@ Current build is a **proof, not production**. Target:
 
 ## Production Tally→SF — BUILT this session (config-driven, logs to Trigger_Log__c)
 
-Rebuilt the Tally→SF direction production-grade. All compiles (`tsc -p src/tsconfig.json`).
-NOT yet run against live Tally/SF (standing rule: don't touch live Tally/Drive).
+Rebuilt the Tally→SF direction production-grade. **VERIFIED LIVE end-to-end (2026-09-14)**
+against dev Tally (localhost:9000) + morde sandbox: deployed metadata; created Distributor__c
+(SAP DEV001) + Sync_Config__c (Invoice/ToSalesforce) + 3 Field_Mapping__c; ran cycle → read 7
+Sales vouchers, upserted 7 Tally_Invoice__c rows (party/amount/date/guid/alterid), stamped
+Distributor + watermark→77 + Last_Run; second run fetched 0 (incremental watermark works);
+Tally-down run correctly reports ERR and holds the watermark (resilience). No Drive touched.
 
 **Connector modules (new/changed):**
 - `src/sfLog.mts` (NEW) — `logToTrigger(entry)` writes to Morde's shared **`Trigger_Log__c`**
