@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { loadSyncConfigs, resolveAccount, isDue } from './sfConfig.mjs';
+import { loadSyncConfigs, resolveAccount, isDue, type Direction } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally, type LogFn } from './sfAgent.mjs';
 import { logToTrigger } from './sfLog.mjs';
 
@@ -8,7 +8,7 @@ import { logToTrigger } from './sfLog.mjs';
 // the directions SF has enabled and that are due per their schedule. Nothing is hard-coded on
 // or off in the connector — an admin flips a row in SF and the next cycle honours it.
 
-export interface RunnerOptions { server: string; port: number; dryRun?: boolean; force?: boolean; log?: LogFn; }
+export interface RunnerOptions { server: string; port: number; dryRun?: boolean; force?: boolean; objectType?: string; direction?: Direction; log?: LogFn; }
 
 /** The distributor's SAP company code is baked into the per-distributor build. */
 export function bakedSapCode(): string {
@@ -37,8 +37,9 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
     log(`[runner] distributor ${acct.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
 
     // ---- Tally -> Salesforce (read) ----
-    const toSf = await loadSyncConfigs(sapCode, 'ToSalesforce');
+    const toSf = (opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapCode, 'ToSalesforce');
     for (const cfg of toSf) {
+        if (opts.objectType && cfg.objectType !== opts.objectType) continue; // schedule one object at a time
         const spec = SPECS[cfg.objectType];
         if (!spec) { log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true); continue; }
         if (!opts.force && !isDue(cfg, Date.now())) { log(`[runner] ${cfg.objectType} Tally->SF not due yet (every ${cfg.frequencyMinutes}m)`); continue; }
@@ -53,8 +54,9 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
     }
 
     // ---- Salesforce -> Tally (write) ----
-    const toTally = await loadSyncConfigs(sapCode, 'ToTally');
+    const toTally = (opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapCode, 'ToTally');
     for (const cfg of toTally) {
+        if (opts.objectType && cfg.objectType !== opts.objectType) continue; // schedule one object at a time
         const spec = SPECS[cfg.objectType];
         if (!spec) { log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true); continue; }
         if (!opts.force && !isDue(cfg, Date.now())) { log(`[runner] ${cfg.objectType} SF->Tally not due yet (every ${cfg.frequencyMinutes}m)`); continue; }

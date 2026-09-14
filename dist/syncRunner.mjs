@@ -30,8 +30,10 @@ export async function runCycle(opts) {
     }
     log(`[runner] distributor ${acct.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
     // ---- Tally -> Salesforce (read) ----
-    const toSf = await loadSyncConfigs(sapCode, 'ToSalesforce');
+    const toSf = (opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapCode, 'ToSalesforce');
     for (const cfg of toSf) {
+        if (opts.objectType && cfg.objectType !== opts.objectType)
+            continue; // schedule one object at a time
         const spec = SPECS[cfg.objectType];
         if (!spec) {
             log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true);
@@ -52,8 +54,10 @@ export async function runCycle(opts) {
         }
     }
     // ---- Salesforce -> Tally (write) ----
-    const toTally = await loadSyncConfigs(sapCode, 'ToTally');
+    const toTally = (opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapCode, 'ToTally');
     for (const cfg of toTally) {
+        if (opts.objectType && cfg.objectType !== opts.objectType)
+            continue; // schedule one object at a time
         const spec = SPECS[cfg.objectType];
         if (!spec) {
             log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true);

@@ -19,17 +19,28 @@ function loadTally(): { server: string; port: number } {
     } catch { return { server: '127.0.0.1', port: 9000 }; }
 }
 
+// Optional flags:
+//   --object <Type>       run only this object (Invoice|Purchase|Order|Note) — one schedule per object
+//   --direction <Dir>     ToSalesforce | ToTally (default: both)
+//   --live --force        as before
+function argVal(argv: string[], name: string): string | undefined {
+    const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined;
+}
+
 async function main() {
-    const args = new Set(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    const args = new Set(argv);
     const dryRun = !args.has('--live');
     const force = args.has('--force');
+    const objectType = argVal(argv, '--object');
+    const direction = argVal(argv, '--direction') as ('ToSalesforce' | 'ToTally' | undefined);
     const { server, port } = loadTally();
     const log = (m: string, e?: boolean) => console[e ? 'error' : 'log'](m);
 
     if (!bakedSapCode()) { console.error('No distributor SAP code in connections.json (distributor.sapCode). Aborting.'); process.exit(2); }
-    console.log(`Tally at ${server}:${port} — ${dryRun ? 'DRY-RUN (no writes)' : 'LIVE'}${force ? ', forced' : ''}`);
+    console.log(`Tally at ${server}:${port} — ${dryRun ? 'DRY-RUN (no writes)' : 'LIVE'}${force ? ', forced' : ''}${objectType ? `, object=${objectType}` : ''}${direction ? `, direction=${direction}` : ''}`);
 
-    const reports = await runCycle({ server, port, dryRun, force, log });
+    const reports = await runCycle({ server, port, dryRun, force, objectType, direction, log });
     console.log('\n=== cycle summary ===');
     if (!reports.length) console.log('(nothing enabled/due)');
     for (const r of reports) console.log(`${r.ok ? 'OK ' : 'ERR'} ${r.direction} ${r.objectType}: ${r.detail}`);
