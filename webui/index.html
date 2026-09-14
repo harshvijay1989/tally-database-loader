@@ -430,15 +430,25 @@ async function loadMap(){
   try{
     const d=await (await fetch('/api/mappings?object='+encodeURIComponent(obj)+'&direction='+encodeURIComponent(dir))).json();
     const ov=d.overrides||{};
-    info.textContent=(d.rows||[]).length+' fields'+(Object.keys(ov).length?' · '+Object.keys(ov).length+' edited locally':'')+(d.error?(' · '+d.error):'');
+    // Discover available fields for the Source picker: Tally fields (Tally->SF) or SF fields (SF->Tally).
+    let fieldList=[], discErr='';
+    try{
+      if(dir==='ToSalesforce'){ const f=await (await fetch('/api/discover/tally-fields?object='+encodeURIComponent(obj))).json(); fieldList=[...(f.scalar||[]),...(f.line||[]).map(x=>'line: '+x)]; discErr=f.error||''; }
+      else { const f=await (await fetch('/api/discover/sf-fields?object='+encodeURIComponent(obj))).json(); fieldList=f.fields||[]; discErr=f.error||''; }
+    }catch(e){ discErr='field discovery failed'; }
+    window._fieldList=fieldList;
+    info.textContent=(d.rows||[]).length+' fields'+(Object.keys(ov).length?' · '+Object.keys(ov).length+' edited locally':'')+' · '+fieldList.length+(dir==='ToSalesforce'?' Tally':' Salesforce')+' fields available'+(discErr?(' · ⚠ '+discErr):'')+(d.error?(' · '+d.error):'');
     const srcHdr=dir==='ToSalesforce'?'Source (Tally field)':'Source (Salesforce field)';
-    const tgtHdr=dir==='ToSalesforce'?'Target (Salesforce field)':'Target (Tally logical field)';
-    t.innerHTML='<tr style="text-align:left;border-bottom:1px solid #e5e7eb"><th style="padding:6px">'+tgtHdr+'</th><th>'+srcHdr+'</th><th>Transform</th><th>On</th></tr>'
+    const tgtHdr=dir==='ToSalesforce'?'Target (Salesforce field)':'Target (Tally field)';
+    const dlOpts=(window._fieldList||[]).map(f=>`<option value="${String(f).replace(/"/g,'&quot;')}">`).join('');
+    t.innerHTML='<datalist id="fieldOpts">'+dlOpts+'</datalist>'
+      +'<tr style="text-align:left;border-bottom:1px solid #e5e7eb"><th style="padding:6px">'+tgtHdr+'</th><th>'+srcHdr+'</th><th>Fixed value</th><th>Transform</th><th>On</th></tr>'
       +(d.rows||[]).map((r,i)=>{
         const opts=XFORMS.map(x=>`<option value="${x}"${(r.transform||'')===x?' selected':''}>${x||'(none)'}</option>`).join('');
         const edited=ov[r.target]?' style="background:#fffbeb"':'';
         return `<tr data-target="${r.target}"${edited}><td style="padding:6px"><b>${r.target}</b></td>`
-          +`<td><input class="mapSrc" value="${(r.source||'').replace(/"/g,'&quot;')}" placeholder="${r.constant?'(constant: '+r.constant+')':'tally field'}" style="width:180px;padding:3px 6px"></td>`
+          +`<td><input class="mapSrc" list="fieldOpts" value="${(r.source||'').replace(/"/g,'&quot;')}" placeholder="pick or type a field" style="width:170px;padding:3px 6px"></td>`
+          +`<td><input class="mapConst" value="${(r.constant||'').replace(/"/g,'&quot;')}" placeholder="or a fixed value" style="width:130px;padding:3px 6px"></td>`
           +`<td><select class="mapXf">${opts}</select></td>`
           +`<td style="text-align:center"><input type="checkbox" class="mapOn" checked></td></tr>`;
       }).join('');
@@ -450,6 +460,7 @@ async function saveMap(){
   const rows=[...document.querySelectorAll('#mapEditTable tr[data-target]')].map(tr=>({
     target:tr.getAttribute('data-target'),
     source:tr.querySelector('.mapSrc').value.trim(),
+    constant:tr.querySelector('.mapConst').value.trim(),
     transform:tr.querySelector('.mapXf').value,
     active:tr.querySelector('.mapOn').checked
   }));

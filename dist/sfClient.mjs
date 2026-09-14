@@ -48,6 +48,20 @@ export async function sfQuery(soql) {
     }
     return records;
 }
+/** List the writable field API names of an sObject (for the mapping picker). */
+export async function sfDescribeFields(object) {
+    let a = await sfAuth();
+    const run = (auth) => httpFetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/sobjects/${object}/describe`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    let r = await run(a);
+    if (r.status === 401) {
+        a = await sfAuth(true);
+        r = await run(a);
+    }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !Array.isArray(d.fields))
+        throw new Error(`describe ${object} failed: ${d.message || r.status}`);
+    return d.fields.filter((f) => f.createable || f.updateable).map((f) => f.name).sort();
+}
 /** Insert records via Composite sObject Collections (<=200 per call). */
 export async function sfInsert(object, records) {
     const out = { ids: [], errors: [] };

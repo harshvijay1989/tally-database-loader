@@ -1251,6 +1251,54 @@
       "Target_Field__c": "Product_SAP_Id__c",
       "Active__c": true,
       "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_tt_103"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Target_Field__c": "voucherType",
+      "Constant_Value__c": "Sales",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_tt_104"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Target_Field__c": "counterLedger",
+      "Constant_Value__c": "Sales",
+      "Active__c": true,
+      "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_tt_105"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Target_Field__c": "voucherType",
+      "Constant_Value__c": "Purchase",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_tt_106"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Target_Field__c": "counterLedger",
+      "Constant_Value__c": "Purchase",
+      "Active__c": true,
+      "Sort_Order__c": 6
     }
   ]
 }

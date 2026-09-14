@@ -10,7 +10,7 @@ export interface FieldMap { source?: string; target: string; constant?: string; 
 
 // --- Local overrides (edited in the connector, stored on this machine) ---------
 const OVERRIDES_FILE = './mapping-overrides.json';
-export interface OverrideRow { source?: string; transform?: string; active?: boolean; }
+export interface OverrideRow { source?: string; transform?: string; constant?: string; active?: boolean; }
 type OverrideStore = Record<string, Record<string, OverrideRow>>; // key: `${objectType}|${direction}` -> { [target]: row }
 
 const okey = (objectType: string, direction: string) => `${objectType}|${direction}`;
@@ -40,7 +40,12 @@ function mergeOverrides(objectType: string, direction: string, sfMaps: FieldMap[
     for (const [target, row] of Object.entries(ov)) {
         if (row.active === false) { byTarget.delete(target); continue; }        // distributor disabled this row
         const base = byTarget.get(target) || { target };
-        byTarget.set(target, { ...base, source: row.source ?? base.source, transform: row.transform ?? base.transform });
+        byTarget.set(target, {
+            ...base,
+            source: row.source ?? base.source,
+            transform: row.transform ?? base.transform,
+            constant: (row.constant != null && row.constant !== '') ? row.constant : base.constant,
+        });
     }
     return [...byTarget.values()];
 }

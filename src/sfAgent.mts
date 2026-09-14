@@ -1,6 +1,6 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
-import { postVoucher, type VoucherInput } from './tallyImport.mjs';
+import { postVoucher, ensureLedger, type VoucherInput } from './tallyImport.mjs';
 import { fetchFilteredCollection, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun, type SyncConfig, type AccountRef } from './sfConfig.mjs';
@@ -213,40 +213,112 @@ export async function syncToSalesforce(
 
 // ============================ Salesforce -> Tally (write) ============================
 
-// Double-entry rule per object type — the accounting lives in code; field mapping stays in Salesforce.
-interface ToTallyRule { voucherType: string; counterLedgerDefault: string; partySign: 1 | -1; }
+// Double-entry + inventory rules per object type — the accounting lives in code; field mapping
+// stays in Salesforce. partySign: sign of the party ledger amount (neg=debit, pos=credit).
+// qtySign: inventory movement (-1 outward/sale, +1 inward/purchase). Groups are used to
+// auto-create the party / sales-purchase ledgers if they don't exist yet in Tally.
+interface ToTallyRule { voucherType: string; counterLedgerDefault: string; partySign: 1 | -1; qtySign: 1 | -1; partyGroup: string; counterGroup: string; }
 const TO_TALLY_RULES: Record<string, ToTallyRule> = {
-    Invoice: { voucherType: 'Sales', counterLedgerDefault: 'Sales', partySign: -1 },      // customer debit(-), sales credit(+)
-    Purchase: { voucherType: 'Purchase', counterLedgerDefault: 'Purchase', partySign: 1 }, // supplier credit(+), purchase debit(-)
+    Invoice: { voucherType: 'Sales', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
+    Purchase: { voucherType: 'Purchase', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
 };
 
-/** Build a balanced VoucherInput from mapped logical fields, or return an error string. */
-export function assembleVoucher(objectType: string, logical: Record<string, any>): VoucherInput | string {
+export interface LogicalLine { stockItem?: string; productSapId?: string; qty?: any; unit?: string; rate?: any; amount?: any; ledger?: string; }
+
+/**
+ * Build a balanced VoucherInput from mapped header fields + line items, or return an error.
+ * Line stock items are resolved to the distributor's Tally item name via SAP Id (itemBySap),
+ * falling back to the line's own stock item name. When lines exist the party amount is derived
+ * from the line total, so the voucher always balances.
+ */
+export function assembleVoucher(objectType: string, logical: Record<string, any>, lines: LogicalLine[], itemBySap: Map<string, { name: string; unit: string }>): VoucherInput | string {
     const rule = TO_TALLY_RULES[objectType];
-    if (!rule) return `no ToTally rule for ${objectType}`;
+    if (!rule) return `no ToTally rule for ${objectType} (SF->Tally not supported for this type yet)`;
     if (!logical.party) return 'missing party';
-    const amount = parseFloat(String(logical.amount).replace(/,/g, ''));
-    if (isNaN(amount) || amount === 0) return 'missing/zero amount';
     if (!/^\d{8}$/.test(String(logical.date || ''))) return `bad date '${logical.date}' (need YYYYMMDD)`;
     const party = String(logical.party);
     const counter = String(logical.counterLedger || rule.counterLedgerDefault);
-    const partyAmt = rule.partySign * Math.abs(amount);
+    const num = (v: any) => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; };
+
+    const inventoryEntries = [];
+    let lineTotal = 0;
+    for (const ln of lines) {
+        const sap = String(ln.productSapId || '').toLowerCase();
+        const resolved = sap && itemBySap.get(sap);
+        const stockItem = resolved ? resolved.name : String(ln.stockItem || '');
+        if (!stockItem) return `line has no resolvable stock item (SAP Id '${ln.productSapId || ''}' not found, no name)`;
+        const qty = Math.abs(num(ln.qty));
+        const amt = Math.abs(num(ln.amount));
+        const unit = String(ln.unit || (resolved ? resolved.unit : '') || '');
+        lineTotal += amt;
+        inventoryEntries.push({
+            stockItem, unit, qty: rule.qtySign * qty, rate: num(ln.rate),
+            amount: -rule.partySign * amt,                 // opposite side of the party posting
+            accountingLedger: String(ln.ledger || counter),
+        });
+    }
+
+    const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
+    if (!total) return 'missing/zero amount';
+    const partyAmt = rule.partySign * total;
+    const entries = [{ ledger: party, amount: partyAmt }];
+    if (!lines.length) entries.push({ ledger: counter, amount: -partyAmt }); // no inventory -> plain 2-line accounting voucher
+
     return {
         date: String(logical.date), voucherType: String(logical.voucherType || rule.voucherType), partyLedger: party,
         voucherNumber: logical.number ? String(logical.number) : undefined,
         narration: logical.narration ? String(logical.narration) : undefined,
-        entries: [{ ledger: party, amount: partyAmt }, { ledger: counter, amount: -partyAmt }],
+        entries, inventoryEntries: inventoryEntries.length ? inventoryEntries : undefined,
     };
+}
+
+/** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
+ *  Mirror of loadStockItemSapIds — same mapping-driven source field (Part Number by default). */
+async function loadStockItemBySap(server: string, port: number, sapCode: string, log: LogFn): Promise<Map<string, { name: string; unit: string }>> {
+    const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
+    const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
+    const src = (m?.source || 'partno').toLowerCase();
+    const out = new Map<string, { name: string; unit: string }>();
+    try {
+        const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,BASEUNITS,${src.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
+        for (const r of rows) {
+            const sap = String(r[src] || '').trim();
+            if (r.name && sap) out.set(sap.toLowerCase(), { name: String(r.name).trim(), unit: String(r.baseunits || '').trim() });
+        }
+    } catch (e: any) { log(`  stock-item reverse map failed — ${e?.message || e}`, true); }
+    return out;
+}
+
+/** Read Pending line-item rows for the given header Ids, grouped by parent header Id. */
+async function loadPendingLines(spec: ObjectSpec, headerIds: string[], sapCode: string, log: LogFn): Promise<Map<string, LogicalLine[]>> {
+    const out = new Map<string, LogicalLine[]>();
+    if (!spec.lineObject || !headerIds.length) return out;
+    const parentField = spec.lineParentRel!.replace('__r', '__c'); // e.g. 'Invoice__r' -> 'Invoice__c'
+    const ids = headerIds.map(i => `'${i}'`).join(',');
+    try {
+        const rows = await sfQuery(
+            `SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c ` +
+            `FROM ${spec.lineObject} WHERE ${parentField} IN (${ids}) ORDER BY Line_No__c NULLS LAST`);
+        for (const r of rows) {
+            const pid = r[parentField]; if (!pid) continue;
+            const arr = out.get(pid) || [];
+            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c });
+            out.set(pid, arr);
+        }
+    } catch (e: any) { log(`  line read failed — ${e?.message || e}`, true); }
+    return out;
 }
 
 export interface ToTallyResult { pending: number; created: number; failed: number; errors: string[] }
 
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
- *  Pending staging rows flagged Direction=ToTally, then write status back. */
+ *  Pending staging rows flagged Direction=ToTally (with their line items), then write status back. */
 export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: string, port: number, opts: { dryRun?: boolean; log?: LogFn } = {}): Promise<ToTallyResult> {
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
+    const rule = TO_TALLY_RULES[spec.objectType];
+    if (!rule) { log(`[agent] SF->Tally not supported for ${spec.objectType} yet`, true); return { pending: 0, created: 0, failed: 0, errors: [`no rule for ${spec.objectType}`] }; }
     const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapCode);
     if (!maps.length) { log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true); return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] }; }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source!))];
@@ -255,15 +327,29 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
     const res: ToTallyResult = { pending: rows.length, created: 0, failed: 0, errors: [] };
+    if (!rows.length) {
+        await logToTrigger({ operation: `SF->Tally ${spec.objectType}`, objectName: spec.stagingObject, status: 'Success', responseBody: '0 pending', startedAt });
+        log(`[agent] ${spec.objectType} SF->Tally: nothing pending`); return res;
+    }
+
+    // Load line items for these headers (grouped by parent) + the reverse product map.
+    const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapCode, log);
+    const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapCode, log) : new Map();
 
     for (const row of rows) {
         const logical = applyMapping(row, maps);
-        const built = assembleVoucher(spec.objectType, logical);
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap);
         if (typeof built === 'string') {
             res.failed++; res.errors.push(`${row.Id}: ${built}`);
             if (!opts.dryRun) await sfUpdate(spec.stagingObject, row.Id, { Sync_Status__c: 'Error', Error__c: built }).catch(() => { });
             log(`  ${row.Id}: invalid - ${built}`, true);
             continue;
+        }
+        // Master prerequisites: party + counter ledgers must exist (create if missing).
+        if (!opts.dryRun) {
+            await ensureLedger(server, port, built.partyLedger!, rule.partyGroup, log);
+            const counters = new Set([rule.counterLedgerDefault, ...(built.inventoryEntries || []).map(i => i.accountingLedger)]);
+            for (const c of counters) await ensureLedger(server, port, c, rule.counterGroup, log);
         }
         const pr = await postVoucher(server, port, built, { dryRun: opts.dryRun, log: (m, e) => log('  ' + m, e) });
         if (pr.ok) {

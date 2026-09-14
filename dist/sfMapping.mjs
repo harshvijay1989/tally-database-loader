@@ -36,7 +36,12 @@ function mergeOverrides(objectType, direction, sfMaps) {
             continue;
         } // distributor disabled this row
         const base = byTarget.get(target) || { target };
-        byTarget.set(target, { ...base, source: row.source ?? base.source, transform: row.transform ?? base.transform });
+        byTarget.set(target, {
+            ...base,
+            source: row.source ?? base.source,
+            transform: row.transform ?? base.transform,
+            constant: (row.constant != null && row.constant !== '') ? row.constant : base.constant,
+        });
     }
     return [...byTarget.values()];
 }

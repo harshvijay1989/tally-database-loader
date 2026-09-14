@@ -46,6 +46,17 @@ export async function sfQuery(soql: string): Promise<any[]> {
     return records;
 }
 
+/** List the writable field API names of an sObject (for the mapping picker). */
+export async function sfDescribeFields(object: string): Promise<string[]> {
+    let a = await sfAuth();
+    const run = (auth: SfAuth) => httpFetch(`${auth.instanceUrl}/services/data/v${auth.apiVersion}/sobjects/${object}/describe`, { headers: { Authorization: `Bearer ${auth.token}` } });
+    let r = await run(a);
+    if (r.status === 401) { a = await sfAuth(true); r = await run(a); }
+    const d: any = await r.json().catch(() => ({}));
+    if (!r.ok || !Array.isArray(d.fields)) throw new Error(`describe ${object} failed: ${d.message || r.status}`);
+    return d.fields.filter((f: any) => f.createable || f.updateable).map((f: any) => f.name).sort();
+}
+
 /** Insert records via Composite sObject Collections (<=200 per call). */
 export async function sfInsert(object: string, records: any[]): Promise<{ ids: string[]; errors: string[] }> {
     const out = { ids: [] as string[], errors: [] as string[] };

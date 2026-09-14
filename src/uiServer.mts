@@ -9,6 +9,8 @@ import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP c
 import * as scheduler from './scheduler.mjs'; // self-running in-connector sync scheduler
 import { loadMappings, getOverride, setOverride, type OverrideRow } from './sfMapping.mjs'; // per-distributor local mapping edits
 import { bakedSapCode } from './syncRunner.mjs';
+import { SPECS } from './sfAgent.mjs'; // staging <-> Tally voucher-type specs (for field discovery)
+import { sfDescribeFields } from './sfClient.mjs';
 
 // App version (for logs), read from package.json; falls back if unreadable.
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
@@ -634,6 +636,36 @@ const server = http.createServer(async (req, res) => {
             return json(200, { saved: true });
         }
 
+        // --- Field discovery for the mapping picker ---
+        // Tally fields for an object: read a sample voucher of its type(s) and list the fields
+        // Tally returns (scalars + inventory line fields). Safe bounded read via the agent path.
+        if (url.pathname === '/api/discover/tally-fields' && req.method === 'GET') {
+            const object = url.searchParams.get('object') || 'Invoice';
+            const spec = SPECS[object];
+            if (!spec) return json(200, { object, scalar: [], line: [], error: 'unknown object' });
+            const tc = loadTallyConfig();
+            const server = (!tc.server || tc.server === 'localhost') ? '127.0.0.1' : tc.server;
+            try {
+                const filter = '(' + spec.voucherTypes.map(vt => `$VoucherTypeName = &quot;${vt.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}&quot;`).join(' OR ') + ') AND $AlterID &gt; 0';
+                // A broader FETCH makes Tally serialize the full voucher body (incl. inventory lines).
+                const { rows } = await tallyLive.fetchFilteredCollection(server, tc.port, 'Voucher', 'GUID,DATE,VOUCHERNUMBER,PARTYLEDGERNAME,AMOUNT,NARRATION', filter, {}, 30000);
+                const scalar = new Set<string>(), line = new Set<string>();
+                for (const r of rows.slice(0, 20)) for (const k of Object.keys(r)) {
+                    if (k.startsWith('allinventoryentries.list.') && !k.slice(25).includes('.')) line.add(k.slice(25));
+                    else if (!k.includes('.')) scalar.add(k);
+                }
+                return json(200, { object, scalar: [...scalar].sort(), line: [...line].sort() });
+            } catch (e: any) { return json(200, { object, scalar: [], line: [], error: String(e?.message || e) }); }
+        }
+        // Salesforce fields of a staging object (for the SF->Tally source picker).
+        if (url.pathname === '/api/discover/sf-fields' && req.method === 'GET') {
+            const object = url.searchParams.get('object') || '';
+            if (!object) return json(400, { error: 'object required' });
+            const staging = SPECS[object]?.stagingObject || object; // accept object type or raw sObject name
+            try { return json(200, { object: staging, fields: await sfDescribeFields(staging) }); }
+            catch (e: any) { return json(200, { object: staging, fields: [], error: String(e?.message || e) }); }
+        }
+
         // --- Field mappings (effective = Salesforce defaults + local edits) ---
         if (url.pathname === '/api/mappings' && req.method === 'GET') {
             const object = url.searchParams.get('object') || 'Invoice';
@@ -650,7 +682,7 @@ const server = http.createServer(async (req, res) => {
             const ov: Record<string, OverrideRow> = {};
             for (const r of (b.rows || [])) {
                 if (!r.target) continue;
-                ov[r.target] = { source: r.source || '', transform: r.transform || '', active: r.active !== false };
+                ov[r.target] = { source: r.source || '', transform: r.transform || '', constant: r.constant || '', active: r.active !== false };
             }
             setOverride(object, direction, ov);
             logLine(`Local mapping override saved for ${object}/${direction} (${Object.keys(ov).length} rows)`);
