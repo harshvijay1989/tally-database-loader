@@ -26,6 +26,7 @@
         <members>Tally_Invoice_Line__c.Discount__c</members>
         <members>Tally_Invoice_Line__c.Invoice__c</members>
         <members>Tally_Invoice_Line__c.Line_No__c</members>
+        <members>Tally_Invoice_Line__c.Product_SAP_Id__c</members>
         <members>Tally_Invoice_Line__c.Quantity__c</members>
         <members>Tally_Invoice_Line__c.Rate__c</members>
         <members>Tally_Invoice_Line__c.SAP_Company_Code__c</members>
@@ -61,6 +62,7 @@
         <members>Tally_Note_Line__c.Discount__c</members>
         <members>Tally_Note_Line__c.Line_No__c</members>
         <members>Tally_Note_Line__c.Note__c</members>
+        <members>Tally_Note_Line__c.Product_SAP_Id__c</members>
         <members>Tally_Note_Line__c.Quantity__c</members>
         <members>Tally_Note_Line__c.Rate__c</members>
         <members>Tally_Note_Line__c.SAP_Company_Code__c</members>
@@ -97,6 +99,7 @@
         <members>Tally_Order_Line__c.Discount__c</members>
         <members>Tally_Order_Line__c.Line_No__c</members>
         <members>Tally_Order_Line__c.Order__c</members>
+        <members>Tally_Order_Line__c.Product_SAP_Id__c</members>
         <members>Tally_Order_Line__c.Quantity__c</members>
         <members>Tally_Order_Line__c.Rate__c</members>
         <members>Tally_Order_Line__c.SAP_Company_Code__c</members>
@@ -132,6 +135,7 @@
         <members>Tally_Purchase_Line__c.Amount__c</members>
         <members>Tally_Purchase_Line__c.Discount__c</members>
         <members>Tally_Purchase_Line__c.Line_No__c</members>
+        <members>Tally_Purchase_Line__c.Product_SAP_Id__c</members>
         <members>Tally_Purchase_Line__c.Purchase__c</members>
         <members>Tally_Purchase_Line__c.Quantity__c</members>
         <members>Tally_Purchase_Line__c.Rate__c</members>

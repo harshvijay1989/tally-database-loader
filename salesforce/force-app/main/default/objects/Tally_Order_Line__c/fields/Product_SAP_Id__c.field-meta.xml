@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Product_SAP_Id__c</fullName>
+    <label>Product SAP Id</label>
+    <description>Morde SAP Id for this product, read from the Tally stock item (Part Number by default). Used to identify which Morde product (Product2.SAP_ID__c) the line is.</description>
+    <length>40</length>
+    <type>Text</type>
+    <required>false</required>
+</CustomField>

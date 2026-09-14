@@ -1239,6 +1239,18 @@
       "Target_Field__c": "narration",
       "Active__c": true,
       "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_StockItem_1"
+      },
+      "Object_Type__c": "StockItem",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partno",
+      "Target_Field__c": "Product_SAP_Id__c",
+      "Active__c": true,
+      "Sort_Order__c": 1
     }
   ]
 }

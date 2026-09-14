@@ -24,8 +24,34 @@ function parseQty(v) {
     return m ? { qty: toNum(m[1]), unit: (m[2] || '').trim() } : { qty: null, unit: '' };
 }
 const toRate = (v) => toNum(String(v || '').split('/')[0]);
+/**
+ * Read the Stock Item master and build a `stock item name -> Morde SAP Id` map. The SAP Id
+ * lives on the stock item master (Part Number by default), NOT on the voucher line, so we read
+ * it each cycle and join by name. Which Tally field holds it is mapping-driven (editable per
+ * distributor): a Field_Mapping row Object_Type='StockItem', target 'Product_SAP_Id__c'.
+ */
+export async function loadStockItemSapIds(server, port, sapCode, log) {
+    const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
+    const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
+    const sourceField = (m?.source || 'partno').toLowerCase(); // default: Tally Part Number
+    const out = new Map();
+    try {
+        const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,${sourceField.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
+        for (const r of rows) {
+            const name = String(r.name || '').trim();
+            const sap = String(r[sourceField] || '').trim();
+            if (name && sap)
+                out.set(name.toLowerCase(), sap);
+        }
+        log(`  stock-item SAP ids: ${out.size} mapped (from '${sourceField}')`);
+    }
+    catch (e) {
+        log(`  stock-item master read failed — ${e?.message || e}`, true);
+    }
+    return out;
+}
 /** Build child line records for one voucher row (empty if no inventory). Parent set by external id. */
-function buildLines(spec, row, sapCode) {
+function buildLines(spec, row, sapCode, itemSap) {
     const names = splitMulti(row[`${INV}.stockitemname`]);
     if (!names.length)
         return [];
@@ -40,6 +66,7 @@ function buildLines(spec, row, sapCode) {
             Tally_Line_Key__c: `${row.guid}#${i + 1}`,
             [spec.lineParentRel]: { [spec.externalId]: row.guid },
             Stock_Item__c: name,
+            Product_SAP_Id__c: itemSap.get(name.toLowerCase()) || '', // Morde SAP Id from stock-item master
             Quantity__c: q.qty, Unit__c: q.unit,
             Rate__c: toRate(rate[i]), Discount__c: toNum(disc[i]), Amount__c: toNum(amt[i]),
             Accounting_Ledger__c: ledger[i] || '',
@@ -117,7 +144,9 @@ export async function syncToSalesforce(spec, config, acct, server, port, opts = 
         return rec;
     });
     // Inventory line items (product / qty / rate) -> child rows, parent linked by external id.
-    const lineRecords = spec.lineObject ? clean.flatMap(row => buildLines(spec, row, acct.sapCode)) : [];
+    // Load the stock-item name -> Morde SAP Id map once (from the Tally stock-item master).
+    const itemSap = spec.lineObject ? await loadStockItemSapIds(server, port, acct.sapCode, log) : new Map();
+    const lineRecords = spec.lineObject ? clean.flatMap(row => buildLines(spec, row, acct.sapCode, itemSap)) : [];
     if (opts.dryRun) {
         log(`[agent] ${spec.objectType}: dry-run — would upsert ${records.length} rows + ${lineRecords.length} line items (watermark -> ${res.newWatermark})`);
         log(`  sample: ${JSON.stringify(records[0]).slice(0, 500)}`);
