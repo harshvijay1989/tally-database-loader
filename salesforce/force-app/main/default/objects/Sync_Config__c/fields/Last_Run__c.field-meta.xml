@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Last_Run__c</fullName>
+    <label>Last Run</label>
+    <description>When the connector last completed a cycle for this config. Used with Frequency_Minutes__c for per-mapping scheduling.</description>
+    <type>DateTime</type>
+    <required>false</required>
+</CustomField>

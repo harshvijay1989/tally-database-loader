@@ -238,6 +238,14 @@ export async function fetchCollectionFields(server: string, port: number, tallyT
     } catch (e: any) { log(`${tallyType}: fetch failed - ${e?.message || e}`, true); return { rows: [], fields: [] }; }
 }
 
+/** Bounded, FILTERed collection read routed through the single-flight retry queue (safe
+ *  for the sync agent to call alongside other Tally traffic). Never FETCH * — pass a
+ *  bounded field list. The filter formula must be pre-escaped (see alterIdRangeFilter). */
+export async function fetchFilteredCollection(server: string, port: number, tallyType: string, fetchList: string, filterFormula: string, opts: LiveFetchOptions = {}, timeoutMs = 120000): Promise<LiveFetchResult> {
+    const xml = await fetchXmlWithRetry(server, port, buildFetchXmlFiltered(tallyType, fetchList, filterFormula, opts), timeoutMs, 2);
+    return parseCollection(xml, tallyType);
+}
+
 /** Build an AlterID range filter. Operators MUST be XML-escaped (&gt;/&lt;) — a bare
  *  '<' breaks the <SYSTEM> formula element and silently returns nothing (or wedges Tally). */
 export function alterIdRangeFilter(lo: number, hi: number): string {

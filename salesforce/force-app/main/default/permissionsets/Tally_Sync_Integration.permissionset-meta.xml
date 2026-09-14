@@ -31,15 +31,6 @@
         <modifyAllRecords>true</modifyAllRecords>
     </objectPermissions>
     <objectPermissions>
-        <object>Sync_Log__c</object>
-        <allowCreate>true</allowCreate>
-        <allowRead>true</allowRead>
-        <allowEdit>true</allowEdit>
-        <allowDelete>true</allowDelete>
-        <viewAllRecords>true</viewAllRecords>
-        <modifyAllRecords>true</modifyAllRecords>
-    </objectPermissions>
-    <objectPermissions>
         <object>Field_Mapping__c</object>
         <allowCreate>true</allowCreate>
         <allowRead>true</allowRead>
@@ -77,6 +68,11 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Distributor__c.SAP_Company_Code__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Sync_Config__c.Distributor__c</field>
         <readable>true</readable>
         <editable>true</editable>
@@ -108,6 +104,26 @@
     </fieldPermissions>
     <fieldPermissions>
         <field>Sync_Config__c.Last_AlterId__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Last_Run__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Retry_Enabled__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Max_Retry_Count__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Sync_Config__c.Retry_Interval_Minutes__c</field>
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
@@ -163,46 +179,6 @@
     </fieldPermissions>
     <fieldPermissions>
         <field>Tally_Invoice__c.Raw_Payload__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Distributor__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Object_Type__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Direction__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Status__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Message__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Records_Processed__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Records_Failed__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Log__c.Run_At__c</field>
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
@@ -363,10 +339,6 @@
     </tabSettings>
     <tabSettings>
         <tab>Tally_Purchase_Line__c</tab>
-        <visibility>Visible</visibility>
-    </tabSettings>
-    <tabSettings>
-        <tab>Sync_Log__c</tab>
         <visibility>Visible</visibility>
     </tabSettings>
 </PermissionSet>

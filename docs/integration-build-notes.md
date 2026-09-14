@@ -139,6 +139,102 @@ Current build is a **proof, not production**. Target:
    voucher (works) with status write-back; respect toggles.
 4. **Hardening:** encrypt secrets at rest, error surfacing, packaging, the admin UI.
 
+## Production Tally→SF — BUILT this session (config-driven, logs to Trigger_Log__c)
+
+Rebuilt the Tally→SF direction production-grade. All compiles (`tsc -p src/tsconfig.json`).
+NOT yet run against live Tally/SF (standing rule: don't touch live Tally/Drive).
+
+**Connector modules (new/changed):**
+- `src/sfLog.mts` (NEW) — `logToTrigger(entry)` writes to Morde's shared **`Trigger_Log__c`**
+  using their IntegrationLogger field shape. Best-effort (never throws). Replaces `Sync_Log__c`.
+- `src/sfConfig.mts` (NEW) — the control-plane reader. `loadSyncConfigs(sapCode, direction)`
+  returns only **Enabled** rows for THIS distributor (by SAP code) for that direction (Both counts
+  for either); `isDue(cfg)` = per-mapping schedule; `resolveDistributor(sapCode)`; `saveWatermark`
+  / `stampRun`. This is "connector calls SF before doing anything and only acts if allowed."
+- `src/sfAgent.mts` (REWRITTEN) — now BOTH directions. `SPECS` (Invoice→Sales, Purchase→Purchase,
+  connector-fixed Tally side). `syncToSalesforce(spec,cfg,dist,...)`: incremental voucher read
+  `$VoucherTypeName = X AND $AlterID > watermark` via `fetchFilteredCollection` (bounded fields,
+  serialized queue — never FETCH *), apply SF map (source lowercased to match parsed keys), upsert
+  staging by `Tally_Guid__c`, stamp Distributor+AlterId, **advance watermark only if 0 failures**
+  (else re-read next cycle = resilience), log to Trigger_Log__c. `syncToTally` kept, logging moved
+  to Trigger_Log__c.
+- `src/syncRunner.mts` (NEW) — `runCycle({server,port,dryRun,force})`: reads baked SAP code,
+  resolves distributor, loops enabled+due ToSalesforce then ToTally configs. `bakedSapCode()` from
+  `connections.json.distributor.sapCode`.
+- `src/runSync.mts` (NEW) — CLI: `node dist/runSync.mjs [--live] [--force]`. **Dry-run by default.**
+- `src/tallyLive.mts` — added exported `fetchFilteredCollection(...)` (serialized, bounded, FILTERed).
+
+**Salesforce model changes:**
+- `Distributor__c.SAP_Company_Code__c` (NEW, ExternalId/unique) — identity, ties to
+  `Account.SAP_Company_Code__c`. Baked into per-distributor build.
+- `Sync_Config__c` + `Last_Run__c`, `Retry_Enabled__c`, `Max_Retry_Count__c`,
+  `Retry_Interval_Minutes__c` (mirror Integration_Config__mdt). Already had Object_Type/Direction/
+  Enabled/Frequency_Minutes/Last_AlterId/Debug (= separate read/write toggles + per-mapping schedule
+  + watermark).
+- **Removed `Sync_Log__c`** (object + tab + permset entries) — we log to `Trigger_Log__c`.
+- Permission set updated (new fields; Sync_Log__c refs dropped). Note: `Trigger_Log__c` access is
+  assumed via Morde's existing integration user (not managed in our permset).
+
+**To configure a distributor (runtime, no redeploy):** create `Distributor__c` with its SAP code;
+add `Sync_Config__c` rows (Object_Type, Direction ToSalesforce/ToTally/Both, Enabled, Frequency);
+author `Field_Mapping__c` (Object_Type, Direction, Source=Tally field, Target=SF field, Transform).
+Connector `connections.json` needs `{ "distributor": { "sapCode": "<code>" } }`.
+
+**Still TODO for prod:** deploy metadata to sandbox + smoke-test dry-run; ship default
+Field_Mapping__c rows; bake per-distributor SAP code + shared client-credentials into the installer;
+encrypt connections.json secrets; wire a scheduler (OS task / connector timer) to call runSync;
+then SF→Tally product master-sync (Product2 → Tally stock items) + Order→Purchase.
+
+## Morde's EXISTING framework (found in org — reuse it, don't reinvent)
+
+Morde already has a mature integration + logging framework. Key parts:
+- **Logging → `Trigger_Log__c`** (shared application log; IntegrationLogger writes to it). Fields:
+  `Integration_Name__c`, `Operation__c`, `Object_Name__c`, `Class_Name__c`, `Method_Name__c`,
+  `Log_Level__c`, `Status__c`, `Status_Code__c`, `Error_Message__c`, `Stack_Trace__c`,
+  `Request_Body__c`, `Response_Body__c`, `Request_Endpoint__c`, `HTTP_Method__c`,
+  `Related_Record_Id__c`, `Retry_Count__c`, `Started_At__c`, `Completed_At__c`, `Duration_MS__c`.
+  → **Our connector logs here** (drop my `Sync_Log__c`).
+- **`Integration_Config__mdt`** — metadata config for **SF→external callouts** (Endpoint_Path__c,
+  Named_Credential__c, HTTP_Method__c, Auth_Type__c, Timeout__c, Is_Active__c, Retry_Enabled__c,
+  Max_Retry_Count__c, Retry_Interval_Minutes__c, Log_Request/Response__c). Records: SAP_Create_Order,
+  SAP_Morde, SAP_Morde_Return.
+- **Apex**: IntegrationService/Executor/HttpClient, IntegrationLogger/LoggingService,
+  **IntegrationRetryService** (retry), IntegrationQueueable, IntegrationConfigService; SAP-specific
+  SAPOrderIntegrationService, InvoiceSAPIntegrationAPI, ProformaInvoiceSAPIntegrationAPI,
+  OpportunityProductSyncService. Plus `Trigger_Control__mdt`, `Log_Event__e`, many `*__mdt`.
+
+**Critical architecture note:** Morde's framework is **SF → external (outbound callouts to SAP)**.
+Our Tally connector is the **opposite — external → SF (inbound)**, behind a firewall, so it does NOT
+run inside their Apex framework. We **reuse their conventions**: log to `Trigger_Log__c`, key on **SAP
+codes**, follow the metadata-driven + retry pattern. Think of Tally as "another ERP endpoint" alongside SAP.
+
+**Codes (everything is keyed by a code):** distributor = `Account.SAP_Company_Code__c` (also `SAP_ID__c`,
+`FSSI_code__c`); products = `Product2.SAP_ID__c` / `General_Code__c` / `ProductCode` / `SapCategory__c`.
+
+## Reconciled production design (per user's requirements, 2026-09-14)
+
+1. **Identity = SAP Company Code.** On install, map the connector to its distributor via
+   `Account.SAP_Company_Code__c`; everything stamped/keyed by codes (not SF Ids). Baked into the
+   per-distributor build config. **Credentials are BAKED** (shared client-credentials Connected App);
+   the distributor never authenticates to SF. (User will set the Connected App run-as user.)
+2. **Metadata-driven read/write control, checked at runtime.** Per distributor × mapping: separate
+   **Read (Tally→SF)** and **Write (SF→Tally)** enable flags, held in SF; the connector **calls SF
+   before every action** to check it's allowed, then acts. No connector redeploy to change config.
+   (Evolve `Sync_Config__c` — keyed by SAP code — into this control table.)
+3. **Resilience + per-mapping scheduling.** Handle Tally-down / internet-down: staging rows stay
+   Pending, connector retries (log Retry_Count__c to Trigger_Log__c); nothing lost. **Each mapping
+   scheduled separately** (per-mapping frequency in the config).
+4. **Mapping shipped + SF-editable; SF-side fields fixed.** Ship default mappings; admins can change
+   *some* fields in SF; the **target SF fields are fixed in the connector**; all controlled via SF —
+   no connector push to change a mapping.
+5. **Logging → `Trigger_Log__c`** (replace `Sync_Log__c`).
+6. **Staging objects stay** (Tally maps into them). **Build Tally→SF first**, then SF→Tally
+   (incl. Product2 → Tally stock-item master sync so SF→Tally can resolve items).
+
+**Open design decisions:** config as Custom Metadata (`__mdt`, shipped/deployable) vs custom object
+(`Sync_Config__c`, per-distributor data + per-mapping schedule) — leaning custom object for
+per-distributor/per-mapping scheduling + toggles, mappings possibly `__mdt`. Confirm before building.
+
 ## Git
 
 Branch **`mordefoodspakcage`**. Recent integration commits: SFDX model, Field_Mapping, SF client +
