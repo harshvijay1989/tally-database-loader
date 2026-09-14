@@ -214,8 +214,15 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
     if (!/^\d{8}$/.test(String(logical.date || '')))
         return `bad date '${logical.date}' (need YYYYMMDD)`;
     const party = String(logical.party);
-    const counter = String(logical.counterLedger || rule.counterLedgerDefault);
     const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; };
+    // The voucher type comes from staging (mapping), so SF->Tally recreates the SAME type that
+    // Tally->SF read. For orders, the accounting side follows the type (Purchase Order behaves
+    // like a purchase, Sales Order like a sale) rather than a hard-coded default.
+    const voucherType = String(logical.voucherType || rule.voucherType);
+    const isPurchaseSide = rule.order ? /purchase/i.test(voucherType) : rule.partySign > 0;
+    const partySign = isPurchaseSide ? 1 : -1;
+    const qtySign = isPurchaseSide ? 1 : -1;
+    const counter = String(logical.counterLedger || (isPurchaseSide ? 'Purchase' : 'Sales'));
     const inventoryEntries = [];
     let lineTotal = 0;
     for (const ln of lines) {
@@ -229,30 +236,15 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
         const unit = String(ln.unit || (resolved ? resolved.unit : '') || '');
         lineTotal += amt;
         inventoryEntries.push({
-            stockItem, unit, qty: rule.qtySign * qty, rate: num(ln.rate),
-            // Order vouchers carry no accounting impact; transactional vouchers post the opposite side.
-            amount: rule.order ? amt : -rule.partySign * amt,
+            stockItem, unit, qty: qtySign * qty, rate: num(ln.rate),
+            amount: -partySign * amt, // opposite side of the party posting
             accountingLedger: String(ln.ledger || counter),
         });
-    }
-    const voucherType = String(logical.voucherType || rule.voucherType);
-    // Order voucher: inventory-only, no ledger postings (requires Order Processing in Tally).
-    // Let Tally auto-number the order (a passed VOUCHERNUMBER trips "Bad Order Number").
-    if (rule.order) {
-        if (!inventoryEntries.length)
-            return 'order has no line items';
-        return {
-            date: String(logical.date), voucherType, partyLedger: party,
-            voucherNumber: logical.number ? String(logical.number) : undefined,
-            narration: logical.narration ? String(logical.narration) : undefined,
-            entries: [], inventoryEntries, objView: 'Invoice Voucher View',
-            isOrder: true, orderDueDate: String(logical.date),
-        };
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
     if (!total)
         return 'missing/zero amount';
-    const partyAmt = rule.partySign * total;
+    const partyAmt = partySign * total;
     const entries = [{ ledger: party, amount: partyAmt }];
     if (!lines.length)
         entries.push({ ledger: counter, amount: -partyAmt }); // no inventory -> plain 2-line accounting voucher
@@ -261,6 +253,8 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
         voucherNumber: logical.number ? String(logical.number) : undefined,
         narration: logical.narration ? String(logical.narration) : undefined,
         entries, inventoryEntries: inventoryEntries.length ? inventoryEntries : undefined,
+        // Order vouchers need a reference (the order number) + a per-line order due date.
+        ...(rule.order ? { isOrder: true, reference: logical.number ? String(logical.number) : undefined, orderDueDate: String(logical.date) } : {}),
     };
 }
 /** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
@@ -351,11 +345,9 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         const rule = ruleFor(spec.objectType, logical);
         if (!opts.dryRun) {
             await ensureLedger(server, port, built.partyLedger, rule.partyGroup, log);
-            if (!rule.order) { // order vouchers have no ledger postings
-                const counters = new Set([rule.counterLedgerDefault, ...(built.inventoryEntries || []).map(i => i.accountingLedger)]);
-                for (const c of counters)
-                    await ensureLedger(server, port, c, rule.counterGroup, log);
-            }
+            const counters = new Set((built.inventoryEntries || []).map(i => i.accountingLedger).concat(built.entries.length > 1 ? [built.entries[1].ledger] : []));
+            for (const c of counters)
+                await ensureLedger(server, port, c, rule.counterGroup, log);
         }
         const pr = await postVoucher(server, port, built, { dryRun: opts.dryRun, log: (m, e) => log('  ' + m, e) });
         if (pr.ok) {

@@ -1311,6 +1311,18 @@
       "Target_Field__c": "noteType",
       "Active__c": true,
       "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_order_tt_vt"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Voucher_Type_Name__c",
+      "Target_Field__c": "voucherType",
+      "Active__c": true,
+      "Sort_Order__c": 6
     }
   ]
 }

@@ -29,8 +29,9 @@ export interface VoucherInput {
     inventoryEntries?: InventoryEntry[]; // stock lines (Purchase/Sales with goods)
     company?: string;        // omit to target the currently open company
     objView?: string;        // 'Accounting Voucher View' (default) or 'Invoice Voucher View'
-    isOrder?: boolean;       // order voucher (Sales/Purchase Order): inventory-only, no accounting, needs order due date
+    isOrder?: boolean;       // order voucher (Sales/Purchase Order): needs a reference + per-line order due date
     orderDueDate?: string;   // YYYYMMDD; defaults to the voucher date
+    reference?: string;      // order/bill reference (the order number for order vouchers)
 }
 
 export interface ImportResult { ok: boolean; created: number; altered: number; errors: number; message: string; raw: string; }
@@ -59,21 +60,13 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
         + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
         + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
-        // Order vouchers: order due date + order allocation, and NO accounting allocation.
-        + (v.isOrder
-            ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
-            + '<BASICORDERALLOCATIONS.LIST>'
-            + `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
-            + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
-            + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
-            + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
-            + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
-            + '</BASICORDERALLOCATIONS.LIST>'
-            : '<ACCOUNTINGALLOCATIONS.LIST>'
-            + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
-            + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
-            + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
-            + '</ACCOUNTINGALLOCATIONS.LIST>')
+        // Order vouchers add the line's order due date; accounting allocations stay in both cases.
+        + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
+        + '<ACCOUNTINGALLOCATIONS.LIST>'
+        + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
+        + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
+        + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+        + '</ACCOUNTINGALLOCATIONS.LIST>'
         + '</ALLINVENTORYENTRIES.LIST>').join('');
     const staticVars = v.company ? `<STATICVARIABLES><SVCURRENTCOMPANY>${esc(v.company)}</SVCURRENTCOMPANY></STATICVARIABLES>` : '';
     return '<ENVELOPE>'
@@ -86,6 +79,7 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<EFFECTIVEDATE>${esc(v.date)}</EFFECTIVEDATE>`
         + `<VOUCHERTYPENAME>${esc(v.voucherType)}</VOUCHERTYPENAME>`
         + (v.voucherNumber ? `<VOUCHERNUMBER>${esc(v.voucherNumber)}</VOUCHERNUMBER>` : '')
+        + (v.reference ? `<REFERENCE>${esc(v.reference)}</REFERENCE>` : '')
         + (v.partyLedger ? `<PARTYLEDGERNAME>${esc(v.partyLedger)}</PARTYLEDGERNAME>` : '')
         + (v.narration ? `<NARRATION>${esc(v.narration)}</NARRATION>` : '')
         + entries
