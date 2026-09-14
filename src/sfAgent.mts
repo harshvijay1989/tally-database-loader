@@ -24,13 +24,51 @@ export interface ObjectSpec {
     externalId: string;      // external id field on the staging object (idempotency key)
     voucherTypes: string[];  // Tally voucher type name(s) this staging object collects
     noteType?: boolean;      // Note object: stamp Note_Type__c (Credit/Debit) from the voucher type
+    lineObject?: string;     // child object for inventory line items
+    lineParentRel?: string;  // parent relationship (by external id) on the line, e.g. 'Invoice__r'
 }
 export const SPECS: Record<string, ObjectSpec> = {
-    Invoice: { objectType: 'Invoice', stagingObject: 'Tally_Invoice__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales'] },
-    Purchase: { objectType: 'Purchase', stagingObject: 'Tally_Purchase__c', externalId: 'Tally_Guid__c', voucherTypes: ['Purchase'] },
-    Order: { objectType: 'Order', stagingObject: 'Tally_Order__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales Order', 'Purchase Order'] },
-    Note: { objectType: 'Note', stagingObject: 'Tally_Note__c', externalId: 'Tally_Guid__c', voucherTypes: ['Credit Note', 'Debit Note'], noteType: true },
+    Invoice: { objectType: 'Invoice', stagingObject: 'Tally_Invoice__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales'], lineObject: 'Tally_Invoice_Line__c', lineParentRel: 'Invoice__r' },
+    Purchase: { objectType: 'Purchase', stagingObject: 'Tally_Purchase__c', externalId: 'Tally_Guid__c', voucherTypes: ['Purchase'], lineObject: 'Tally_Purchase_Line__c', lineParentRel: 'Purchase__r' },
+    Order: { objectType: 'Order', stagingObject: 'Tally_Order__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales Order', 'Purchase Order'], lineObject: 'Tally_Order_Line__c', lineParentRel: 'Order__r' },
+    Note: { objectType: 'Note', stagingObject: 'Tally_Note__c', externalId: 'Tally_Guid__c', voucherTypes: ['Credit Note', 'Debit Note'], noteType: true, lineObject: 'Tally_Note_Line__c', lineParentRel: 'Note__r' },
 };
+
+// ---- Inventory line-item parsing ----
+// Tally returns inventory lines as parallel, '; '-joined values on the parent voucher row
+// (e.g. stockitemname="A; B", actualqty="10 MT; 5 MT"). We split them back into one row per item.
+const INV = 'allinventoryentries.list';
+const splitMulti = (v: any): string[] => (v == null || v === '') ? [] : String(v).split('; ');
+const toNum = (v: any): number | null => { if (v == null || v === '') return null; const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; };
+/** "90.00 MT" -> { qty: 90, unit: 'MT' }; "35000.00/MT" (rate) -> 35000 via toRate. */
+function parseQty(v: string): { qty: number | null; unit: string } {
+    const s = String(v || '').trim(); const m = s.match(/^(-?[\d.,]+)\s*(.*)$/);
+    return m ? { qty: toNum(m[1]), unit: (m[2] || '').trim() } : { qty: null, unit: '' };
+}
+const toRate = (v: string): number | null => toNum(String(v || '').split('/')[0]);
+
+/** Build child line records for one voucher row (empty if no inventory). Parent set by external id. */
+function buildLines(spec: ObjectSpec, row: Record<string, string>, sapCode: string): Record<string, any>[] {
+    const names = splitMulti(row[`${INV}.stockitemname`]);
+    if (!names.length) return [];
+    const qty = splitMulti(row[`${INV}.actualqty`]);
+    const rate = splitMulti(row[`${INV}.rate`]);
+    const disc = splitMulti(row[`${INV}.discount`]);
+    const amt = splitMulti(row[`${INV}.amount`]);
+    const ledger = splitMulti(row[`${INV}.accountingallocations.list.ledgername`]);
+    return names.map((name, i) => {
+        const q = parseQty(qty[i]);
+        return {
+            Tally_Line_Key__c: `${row.guid}#${i + 1}`,
+            [spec.lineParentRel!]: { [spec.externalId]: row.guid },
+            Stock_Item__c: name,
+            Quantity__c: q.qty, Unit__c: q.unit,
+            Rate__c: toRate(rate[i]), Discount__c: toNum(disc[i]), Amount__c: toNum(amt[i]),
+            Accounting_Ledger__c: ledger[i] || '',
+            Line_No__c: i + 1, SAP_Company_Code__c: sapCode,
+        };
+    });
+}
 
 // ============================ Tally -> Salesforce (read) ============================
 
@@ -111,15 +149,26 @@ export async function syncToSalesforce(
         return rec;
     });
 
+    // Inventory line items (product / qty / rate) -> child rows, parent linked by external id.
+    const lineRecords = spec.lineObject ? clean.flatMap(row => buildLines(spec, row, acct.sapCode)) : [];
+
     if (opts.dryRun) {
-        log(`[agent] ${spec.objectType}: dry-run — would upsert ${records.length} rows (watermark -> ${res.newWatermark})`);
+        log(`[agent] ${spec.objectType}: dry-run — would upsert ${records.length} rows + ${lineRecords.length} line items (watermark -> ${res.newWatermark})`);
         log(`  sample: ${JSON.stringify(records[0]).slice(0, 500)}`);
-        await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', responseBody: `dry-run ${records.length} rows`, startedAt });
+        if (lineRecords.length) log(`  line sample: ${JSON.stringify(lineRecords[0]).slice(0, 400)}`);
+        await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', responseBody: `dry-run ${records.length} rows, ${lineRecords.length} lines`, startedAt });
         return res;
     }
 
     const up = await sfUpsert(spec.stagingObject, spec.externalId, records, (m, e) => log('  ' + m, e));
     res.upserted = up.success; res.failed = up.failed; res.errors.push(...up.errors);
+
+    // Write line items after the parent headers exist (parent resolved by external id).
+    if (spec.lineObject && lineRecords.length) {
+        const lu = await sfUpsert(spec.lineObject, 'Tally_Line_Key__c', lineRecords, (m, e) => log('  ' + m, e));
+        if (lu.failed) res.errors.push(...lu.errors.map(e => `line: ${e}`));
+        log(`  ${spec.lineObject}: upserted ${lu.success} line items, failed ${lu.failed}`);
+    }
 
     // Only advance the watermark when everything upserted — otherwise re-read the failures next cycle.
     if (up.failed === 0) { await saveWatermark(config.id, res.newWatermark).catch(() => { }); }
