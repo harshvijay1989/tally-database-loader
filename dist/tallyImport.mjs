@@ -21,6 +21,7 @@ export function buildVoucherImportXml(v, action = 'Create') {
         + `<ISDEEMEDPOSITIVE>${e.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
         + `<AMOUNT>${e.amount.toFixed(2)}</AMOUNT>`
         + `</${ledgerTag}>`).join('');
+    const dueDate = v.orderDueDate || v.date;
     const inventory = (v.inventoryEntries || []).map(i => '<ALLINVENTORYENTRIES.LIST>'
         + `<STOCKITEMNAME>${esc(i.stockItem)}</STOCKITEMNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
@@ -28,11 +29,21 @@ export function buildVoucherImportXml(v, action = 'Create') {
         + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
         + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
         + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
-        + '<ACCOUNTINGALLOCATIONS.LIST>'
-        + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
-        + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
-        + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
-        + '</ACCOUNTINGALLOCATIONS.LIST>'
+        // Order vouchers: order due date + order allocation, and NO accounting allocation.
+        + (v.isOrder
+            ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
+                + '<BASICORDERALLOCATIONS.LIST>'
+                + `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
+                + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
+                + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
+                + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
+                + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+                + '</BASICORDERALLOCATIONS.LIST>'
+            : '<ACCOUNTINGALLOCATIONS.LIST>'
+                + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
+                + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
+                + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+                + '</ACCOUNTINGALLOCATIONS.LIST>')
         + '</ALLINVENTORYENTRIES.LIST>').join('');
     const staticVars = v.company ? `<STATICVARIABLES><SVCURRENTCOMPANY>${esc(v.company)}</SVCURRENTCOMPANY></STATICVARIABLES>` : '';
     return '<ENVELOPE>'

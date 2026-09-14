@@ -29,6 +29,8 @@ export interface VoucherInput {
     inventoryEntries?: InventoryEntry[]; // stock lines (Purchase/Sales with goods)
     company?: string;        // omit to target the currently open company
     objView?: string;        // 'Accounting Voucher View' (default) or 'Invoice Voucher View'
+    isOrder?: boolean;       // order voucher (Sales/Purchase Order): inventory-only, no accounting, needs order due date
+    orderDueDate?: string;   // YYYYMMDD; defaults to the voucher date
 }
 
 export interface ImportResult { ok: boolean; created: number; altered: number; errors: number; message: string; raw: string; }
@@ -48,6 +50,7 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<ISDEEMEDPOSITIVE>${e.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
         + `<AMOUNT>${e.amount.toFixed(2)}</AMOUNT>`
         + `</${ledgerTag}>`).join('');
+    const dueDate = v.orderDueDate || v.date;
     const inventory = (v.inventoryEntries || []).map(i =>
         '<ALLINVENTORYENTRIES.LIST>'
         + `<STOCKITEMNAME>${esc(i.stockItem)}</STOCKITEMNAME>`
@@ -56,11 +59,21 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
         + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
         + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
-        + '<ACCOUNTINGALLOCATIONS.LIST>'
-        + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
-        + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
-        + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
-        + '</ACCOUNTINGALLOCATIONS.LIST>'
+        // Order vouchers: order due date + order allocation, and NO accounting allocation.
+        + (v.isOrder
+            ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
+            + '<BASICORDERALLOCATIONS.LIST>'
+            + `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>`
+            + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
+            + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
+            + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
+            + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+            + '</BASICORDERALLOCATIONS.LIST>'
+            : '<ACCOUNTINGALLOCATIONS.LIST>'
+            + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
+            + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
+            + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
+            + '</ACCOUNTINGALLOCATIONS.LIST>')
         + '</ALLINVENTORYENTRIES.LIST>').join('');
     const staticVars = v.company ? `<STATICVARIABLES><SVCURRENTCOMPANY>${esc(v.company)}</SVCURRENTCOMPANY></STATICVARIABLES>` : '';
     return '<ENVELOPE>'

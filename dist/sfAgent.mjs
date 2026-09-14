@@ -191,7 +191,7 @@ const TO_TALLY_RULES = {
     // Debit Note: supplier debited (reduce payable), goods go back out.
     DebitNote: { voucherType: 'Debit Note', counterLedgerDefault: 'Purchase', partySign: -1, qtySign: -1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
     // Sales Order: inventory-only order voucher, NO accounting impact (needs Order Processing in Tally).
-    Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
+    Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: 1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
 };
 /** Resolve the accounting rule for a staging object; Note branches on its Credit/Debit type. */
 function ruleFor(objectType, logical) {
@@ -243,8 +243,10 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
             return 'order has no line items';
         return {
             date: String(logical.date), voucherType, partyLedger: party,
+            voucherNumber: logical.number ? String(logical.number) : undefined,
             narration: logical.narration ? String(logical.narration) : undefined,
             entries: [], inventoryEntries, objView: 'Invoice Voucher View',
+            isOrder: true, orderDueDate: String(logical.date),
         };
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
