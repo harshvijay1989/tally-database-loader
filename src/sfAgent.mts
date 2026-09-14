@@ -22,11 +22,14 @@ export interface ObjectSpec {
     objectType: string;      // matches Sync_Config__c / Field_Mapping__c Object_Type__c
     stagingObject: string;   // Salesforce staging object
     externalId: string;      // external id field on the staging object (idempotency key)
-    voucherType: string;     // Tally voucher type name
+    voucherTypes: string[];  // Tally voucher type name(s) this staging object collects
+    noteType?: boolean;      // Note object: stamp Note_Type__c (Credit/Debit) from the voucher type
 }
 export const SPECS: Record<string, ObjectSpec> = {
-    Invoice: { objectType: 'Invoice', stagingObject: 'Tally_Invoice__c', externalId: 'Tally_Guid__c', voucherType: 'Sales' },
-    Purchase: { objectType: 'Purchase', stagingObject: 'Tally_Purchase__c', externalId: 'Tally_Guid__c', voucherType: 'Purchase' },
+    Invoice: { objectType: 'Invoice', stagingObject: 'Tally_Invoice__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales'] },
+    Purchase: { objectType: 'Purchase', stagingObject: 'Tally_Purchase__c', externalId: 'Tally_Guid__c', voucherTypes: ['Purchase'] },
+    Order: { objectType: 'Order', stagingObject: 'Tally_Order__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales Order', 'Purchase Order'] },
+    Note: { objectType: 'Note', stagingObject: 'Tally_Note__c', externalId: 'Tally_Guid__c', voucherTypes: ['Credit Note', 'Debit Note'], noteType: true },
 };
 
 // ============================ Tally -> Salesforce (read) ============================
@@ -34,7 +37,7 @@ export const SPECS: Record<string, ObjectSpec> = {
 export interface ToSfResult { fetched: number; upserted: number; failed: number; newWatermark: number; errors: string[] }
 
 /** Fields the connector always reads regardless of mapping (idempotency + watermark + traceability). */
-const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE'];
+const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE', 'VOUCHERTYPENAME'];
 
 /**
  * One incremental Tally->SF pass for a single object type. Reads only vouchers of the
@@ -61,7 +64,8 @@ export async function syncToSalesforce(
     }
     const fetchList = [...new Set([...SYSTEM_FETCH, ...maps.filter(m => m.source).map(m => m.source!.toUpperCase())])].join(',');
     // Incremental + type-scoped filter. Operators/quotes MUST be XML-escaped (see alterIdRangeFilter).
-    const filter = `$VoucherTypeName = ${qstr(spec.voucherType)} AND $AlterID &gt; ${config.lastAlterId}`;
+    const typeFilter = spec.voucherTypes.map(vt => `$VoucherTypeName = ${qstr(vt)}`).join(' OR ');
+    const filter = `(${typeFilter}) AND $AlterID &gt; ${config.lastAlterId}`;
 
     let rows: Record<string, string>[];
     try {
@@ -88,7 +92,7 @@ export async function syncToSalesforce(
         const mapped = applyMapping(row, maps);
         const alterId = parseInt(row.alterid || '0', 10) || 0;
         if (alterId > res.newWatermark) res.newWatermark = alterId;
-        return {
+        const rec: Record<string, any> = {
             ...mapped,
             [spec.externalId]: row.guid,
             Tally_AlterId__c: alterId,
@@ -97,7 +101,14 @@ export async function syncToSalesforce(
             Direction__c: 'ToSalesforce',
             Sync_Status__c: 'Done',
             Error__c: '',
+            Raw_Payload__c: JSON.stringify(row).slice(0, 131072), // full-fidelity capture; nothing lost
         };
+        // Note object: one staging object holds both Credit and Debit notes; stamp which.
+        if (spec.noteType) {
+            const vt = String(row.vouchertypename || '').toLowerCase();
+            rec.Note_Type__c = vt.includes('debit') ? 'Debit' : vt.includes('credit') ? 'Credit' : undefined;
+        }
+        return rec;
     });
 
     if (opts.dryRun) {

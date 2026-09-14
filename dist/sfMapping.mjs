@@ -42,6 +42,10 @@ export function applyTransform(v, t) {
         case 'upper': return String(v).toUpperCase();
         case 'lower': return String(v).toLowerCase();
         case 'trim': return String(v).trim();
+        case 'bool': {
+            const s = String(v).trim().toLowerCase();
+            return s === 'yes' || s === 'true' || s === '1';
+        } // Tally 'Yes'/'No' -> checkbox
         case 'number': {
             const n = parseFloat(String(v).replace(/,/g, ''));
             return isNaN(n) ? null : n;
@@ -52,12 +56,12 @@ export function applyTransform(v, t) {
         }
         case 'tallydate': {
             const s = String(v).replace(/[^0-9]/g, '');
-            return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : v;
-        } // YYYYMMDD -> YYYY-MM-DD (SF Date)
+            return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : null;
+        } // YYYYMMDD -> YYYY-MM-DD (SF Date); empty/invalid -> null
         case 'sfdate': {
             const s = String(v).replace(/[^0-9]/g, '');
-            return s.length === 8 ? s : v;
-        } // YYYY-MM-DD -> YYYYMMDD (Tally)
+            return s.length === 8 ? s : null;
+        } // YYYY-MM-DD -> YYYYMMDD (Tally); empty/invalid -> null
         default: return v;
     }
 }

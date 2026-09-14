@@ -1,0 +1,1244 @@
+{
+  "records": [
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_1"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "guid",
+      "Target_Field__c": "Tally_Guid__c",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_2"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "date",
+      "Target_Field__c": "Voucher_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_3"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "effectivedate",
+      "Target_Field__c": "Effective_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_4"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partyledgername",
+      "Target_Field__c": "Party_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_5"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "amount",
+      "Target_Field__c": "Amount__c",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_6"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumber",
+      "Target_Field__c": "Tally_Voucher_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_7"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchertypename",
+      "Target_Field__c": "Voucher_Type_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 7
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_8"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "narration",
+      "Target_Field__c": "Narration__c",
+      "Active__c": true,
+      "Sort_Order__c": 8
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_9"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "reference",
+      "Target_Field__c": "Reference_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 9
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_10"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "referencedate",
+      "Target_Field__c": "Reference_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 10
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_11"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "isinvoice",
+      "Target_Field__c": "Is_Invoice__c",
+      "Transform__c": "bool",
+      "Active__c": true,
+      "Sort_Order__c": 11
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_12"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "persistedview",
+      "Target_Field__c": "Voucher_View__c",
+      "Active__c": true,
+      "Sort_Order__c": 12
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_13"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "masterid",
+      "Target_Field__c": "Master_Id__c",
+      "Active__c": true,
+      "Sort_Order__c": 13
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_14"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "statename",
+      "Target_Field__c": "State_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 14
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_15"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "placeofsupply",
+      "Target_Field__c": "Place_Of_Supply__c",
+      "Active__c": true,
+      "Sort_Order__c": 15
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_16"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partygstin",
+      "Target_Field__c": "Party_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 16
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_17"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "consigneegstin",
+      "Target_Field__c": "Consignee_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 17
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_18"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumberseries",
+      "Target_Field__c": "Voucher_Number_Series__c",
+      "Active__c": true,
+      "Sort_Order__c": 18
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_19"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Direction__c",
+      "Constant_Value__c": "ToSalesforce",
+      "Active__c": true,
+      "Sort_Order__c": 19
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToSalesforce_20"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Sync_Status__c",
+      "Constant_Value__c": "Done",
+      "Active__c": true,
+      "Sort_Order__c": 20
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToTally_21"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Voucher_Date__c",
+      "Target_Field__c": "date",
+      "Transform__c": "sfdate",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToTally_22"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Party_Name__c",
+      "Target_Field__c": "party",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToTally_23"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Amount__c",
+      "Target_Field__c": "amount",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToTally_24"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Tally_Voucher_Number__c",
+      "Target_Field__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Invoice_ToTally_25"
+      },
+      "Object_Type__c": "Invoice",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Narration__c",
+      "Target_Field__c": "narration",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_26"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "guid",
+      "Target_Field__c": "Tally_Guid__c",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_27"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "date",
+      "Target_Field__c": "Voucher_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_28"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "effectivedate",
+      "Target_Field__c": "Effective_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_29"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partyledgername",
+      "Target_Field__c": "Supplier__c",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_30"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "amount",
+      "Target_Field__c": "Amount__c",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_31"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumber",
+      "Target_Field__c": "Tally_Voucher_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_32"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchertypename",
+      "Target_Field__c": "Voucher_Type_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 7
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_33"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "narration",
+      "Target_Field__c": "Narration__c",
+      "Active__c": true,
+      "Sort_Order__c": 8
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_34"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "reference",
+      "Target_Field__c": "Reference_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 9
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_35"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "referencedate",
+      "Target_Field__c": "Reference_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 10
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_36"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "isinvoice",
+      "Target_Field__c": "Is_Invoice__c",
+      "Transform__c": "bool",
+      "Active__c": true,
+      "Sort_Order__c": 11
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_37"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "persistedview",
+      "Target_Field__c": "Voucher_View__c",
+      "Active__c": true,
+      "Sort_Order__c": 12
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_38"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "masterid",
+      "Target_Field__c": "Master_Id__c",
+      "Active__c": true,
+      "Sort_Order__c": 13
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_39"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "statename",
+      "Target_Field__c": "State_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 14
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_40"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "placeofsupply",
+      "Target_Field__c": "Place_Of_Supply__c",
+      "Active__c": true,
+      "Sort_Order__c": 15
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_41"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partygstin",
+      "Target_Field__c": "Party_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 16
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_42"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "consigneegstin",
+      "Target_Field__c": "Consignee_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 17
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_43"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumberseries",
+      "Target_Field__c": "Voucher_Number_Series__c",
+      "Active__c": true,
+      "Sort_Order__c": 18
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_44"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Direction__c",
+      "Constant_Value__c": "ToSalesforce",
+      "Active__c": true,
+      "Sort_Order__c": 19
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToSalesforce_45"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Sync_Status__c",
+      "Constant_Value__c": "Done",
+      "Active__c": true,
+      "Sort_Order__c": 20
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToTally_46"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Voucher_Date__c",
+      "Target_Field__c": "date",
+      "Transform__c": "sfdate",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToTally_47"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Supplier__c",
+      "Target_Field__c": "party",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToTally_48"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Amount__c",
+      "Target_Field__c": "amount",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToTally_49"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Tally_Voucher_Number__c",
+      "Target_Field__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Purchase_ToTally_50"
+      },
+      "Object_Type__c": "Purchase",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Narration__c",
+      "Target_Field__c": "narration",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_51"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "guid",
+      "Target_Field__c": "Tally_Guid__c",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_52"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "date",
+      "Target_Field__c": "Voucher_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_53"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "effectivedate",
+      "Target_Field__c": "Effective_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_54"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partyledgername",
+      "Target_Field__c": "Party_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_55"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "amount",
+      "Target_Field__c": "Amount__c",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_56"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumber",
+      "Target_Field__c": "Tally_Voucher_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_57"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchertypename",
+      "Target_Field__c": "Voucher_Type_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 7
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_58"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "narration",
+      "Target_Field__c": "Narration__c",
+      "Active__c": true,
+      "Sort_Order__c": 8
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_59"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "reference",
+      "Target_Field__c": "Reference_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 9
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_60"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "referencedate",
+      "Target_Field__c": "Reference_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 10
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_61"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "isinvoice",
+      "Target_Field__c": "Is_Invoice__c",
+      "Transform__c": "bool",
+      "Active__c": true,
+      "Sort_Order__c": 11
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_62"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "persistedview",
+      "Target_Field__c": "Voucher_View__c",
+      "Active__c": true,
+      "Sort_Order__c": 12
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_63"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "masterid",
+      "Target_Field__c": "Master_Id__c",
+      "Active__c": true,
+      "Sort_Order__c": 13
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_64"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "statename",
+      "Target_Field__c": "State_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 14
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_65"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "placeofsupply",
+      "Target_Field__c": "Place_Of_Supply__c",
+      "Active__c": true,
+      "Sort_Order__c": 15
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_66"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partygstin",
+      "Target_Field__c": "Party_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 16
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_67"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "consigneegstin",
+      "Target_Field__c": "Consignee_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 17
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_68"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumberseries",
+      "Target_Field__c": "Voucher_Number_Series__c",
+      "Active__c": true,
+      "Sort_Order__c": 18
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_69"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Direction__c",
+      "Constant_Value__c": "ToSalesforce",
+      "Active__c": true,
+      "Sort_Order__c": 19
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_70"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Sync_Status__c",
+      "Constant_Value__c": "Done",
+      "Active__c": true,
+      "Sort_Order__c": 20
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToSalesforce_71"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumber",
+      "Target_Field__c": "Order_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 21
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToTally_72"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Voucher_Date__c",
+      "Target_Field__c": "date",
+      "Transform__c": "sfdate",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToTally_73"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Party_Name__c",
+      "Target_Field__c": "party",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToTally_74"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Amount__c",
+      "Target_Field__c": "amount",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToTally_75"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Tally_Voucher_Number__c",
+      "Target_Field__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Order_ToTally_76"
+      },
+      "Object_Type__c": "Order",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Narration__c",
+      "Target_Field__c": "narration",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_77"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "guid",
+      "Target_Field__c": "Tally_Guid__c",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_78"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "date",
+      "Target_Field__c": "Voucher_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_79"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "effectivedate",
+      "Target_Field__c": "Effective_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_80"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partyledgername",
+      "Target_Field__c": "Party_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_81"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "amount",
+      "Target_Field__c": "Amount__c",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_82"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumber",
+      "Target_Field__c": "Tally_Voucher_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 6
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_83"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchertypename",
+      "Target_Field__c": "Voucher_Type_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 7
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_84"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "narration",
+      "Target_Field__c": "Narration__c",
+      "Active__c": true,
+      "Sort_Order__c": 8
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_85"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "reference",
+      "Target_Field__c": "Reference_Number__c",
+      "Active__c": true,
+      "Sort_Order__c": 9
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_86"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "referencedate",
+      "Target_Field__c": "Reference_Date__c",
+      "Transform__c": "tallydate",
+      "Active__c": true,
+      "Sort_Order__c": 10
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_87"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "isinvoice",
+      "Target_Field__c": "Is_Invoice__c",
+      "Transform__c": "bool",
+      "Active__c": true,
+      "Sort_Order__c": 11
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_88"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "persistedview",
+      "Target_Field__c": "Voucher_View__c",
+      "Active__c": true,
+      "Sort_Order__c": 12
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_89"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "masterid",
+      "Target_Field__c": "Master_Id__c",
+      "Active__c": true,
+      "Sort_Order__c": 13
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_90"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "statename",
+      "Target_Field__c": "State_Name__c",
+      "Active__c": true,
+      "Sort_Order__c": 14
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_91"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "placeofsupply",
+      "Target_Field__c": "Place_Of_Supply__c",
+      "Active__c": true,
+      "Sort_Order__c": 15
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_92"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "partygstin",
+      "Target_Field__c": "Party_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 16
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_93"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "consigneegstin",
+      "Target_Field__c": "Consignee_GSTIN__c",
+      "Active__c": true,
+      "Sort_Order__c": 17
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_94"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Source_Field__c": "vouchernumberseries",
+      "Target_Field__c": "Voucher_Number_Series__c",
+      "Active__c": true,
+      "Sort_Order__c": 18
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_95"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Direction__c",
+      "Constant_Value__c": "ToSalesforce",
+      "Active__c": true,
+      "Sort_Order__c": 19
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToSalesforce_96"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToSalesforce",
+      "Target_Field__c": "Sync_Status__c",
+      "Constant_Value__c": "Done",
+      "Active__c": true,
+      "Sort_Order__c": 20
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToTally_97"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Voucher_Date__c",
+      "Target_Field__c": "date",
+      "Transform__c": "sfdate",
+      "Active__c": true,
+      "Sort_Order__c": 1
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToTally_98"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Party_Name__c",
+      "Target_Field__c": "party",
+      "Active__c": true,
+      "Sort_Order__c": 2
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToTally_99"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Amount__c",
+      "Target_Field__c": "amount",
+      "Transform__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 3
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToTally_100"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Tally_Voucher_Number__c",
+      "Target_Field__c": "number",
+      "Active__c": true,
+      "Sort_Order__c": 4
+    },
+    {
+      "attributes": {
+        "type": "Field_Mapping__c",
+        "referenceId": "fm_Note_ToTally_101"
+      },
+      "Object_Type__c": "Note",
+      "Direction__c": "ToTally",
+      "Source_Field__c": "Narration__c",
+      "Target_Field__c": "narration",
+      "Active__c": true,
+      "Sort_Order__c": 5
+    }
+  ]
+}
