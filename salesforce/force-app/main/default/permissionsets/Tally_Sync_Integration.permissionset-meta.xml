@@ -928,6 +928,11 @@
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Purchase__c.Tally_AlterId__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
     <tabSettings>
         <tab>Tally_Order__c</tab>
         <visibility>Visible</visibility>

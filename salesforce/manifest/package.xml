@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
+        <members>Tally_Sync</members>
+        <name>CustomApplication</name>
+    </types>
+    <types>
         <members>Field_Mapping__c.Account__c</members>
         <members>Field_Mapping__c.Active__c</members>
         <members>Field_Mapping__c.Constant_Value__c</members>
@@ -186,8 +190,11 @@
     <types>
         <members>Field_Mapping__c</members>
         <members>Sync_Config__c</members>
+        <members>Tally_Invoice_Line__c</members>
         <members>Tally_Invoice__c</members>
+        <members>Tally_Note_Line__c</members>
         <members>Tally_Note__c</members>
+        <members>Tally_Order_Line__c</members>
         <members>Tally_Order__c</members>
         <members>Tally_Purchase_Line__c</members>
         <members>Tally_Purchase__c</members>
