@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Account__c</fullName>
+    <label>Distributor Account</label>
+    <description>The distributor this config belongs to. The connector loads only the rows whose Account.SAP_Company_Code__c matches the SAP code in its Connections screen.</description>
+    <referenceTo>Account</referenceTo>
+    <relationshipLabel>Sync Configs</relationshipLabel>
+    <relationshipName>Tally_Sync_Configs</relationshipName>
+    <required>false</required>
+    <type>Lookup</type>
+</CustomField>

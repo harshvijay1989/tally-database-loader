@@ -241,6 +241,16 @@
       </div>
     </div>
 
+    <div class="connsec" id="distConnSec">
+      <h4><span class="chip sf">Distributor</span> This connector's identity</h4>
+      <p class="hint">Enter this distributor's <b>SAP Company Code</b>. It's matched against the Salesforce <b>Account</b> (Account.SAP_Company_Code__c) — that Account is the distributor. The connector only syncs the config, mappings and records for this code. Save Salesforce credentials above first so it can verify.</p>
+      <div class="frow" style="max-width:280px"><label>SAP Company Code</label><input id="distSapCode" placeholder="e.g. DEV001"></div>
+      <div class="connfoot">
+        <button onclick="saveDistributor()">Save &amp; verify</button>
+        <span id="distConnStat" class="connstat"></span>
+      </div>
+    </div>
+
     <div class="connsec" id="gConnSec">
       <h4><span class="chip gd">Google Drive</span> Sign in with Google</h4>
       <div id="gEditable">
@@ -392,7 +402,17 @@ async function openConnections(){
   document.getElementById('tlConnStat').textContent='';
   try{ const uc = await (await fetch('/api/connector/config')).json(); document.getElementById('uiPort').value = uc.port||3000; document.getElementById('uiExpose').checked = !!uc.exposeNetwork; }catch(e){}
   document.getElementById('uiConnStat').textContent='';
+  try{ const d = await (await fetch('/api/distributor')).json(); document.getElementById('distSapCode').value = d.sapCode||''; }catch(e){}
+  document.getElementById('distConnStat').textContent='';
   document.getElementById('connModal').classList.remove('hidden');
+}
+async function saveDistributor(){
+  const stat=document.getElementById('distConnStat'); stat.textContent='Saving…'; stat.className='connstat';
+  const sapCode=(document.getElementById('distSapCode').value||'').trim();
+  const r = await (await fetch('/api/distributor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sapCode})})).json();
+  if(r.verified){ stat.textContent='✓ matched · '+(r.accountName||''); stat.className='connstat ok'; }
+  else if(!sapCode){ stat.textContent='✓ cleared'; stat.className='connstat'; }
+  else { stat.textContent='⚠ saved · '+(r.error||'not verified'); stat.className='connstat bad'; }
 }
 function setGoogleStat(on, email){ const s=document.getElementById('gConnStat'); s.textContent = on ? ('✓ connected'+(email?' · '+email:'')) : ''; s.className='connstat'+(on?' ok':''); }
 

@@ -3,7 +3,7 @@ import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, type VoucherInput } from './tallyImport.mjs';
 import { fetchFilteredCollection, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
-import { saveWatermark, stampRun, type SyncConfig, type DistributorRef } from './sfConfig.mjs';
+import { saveWatermark, stampRun, type SyncConfig, type AccountRef } from './sfConfig.mjs';
 
 // Two-way Salesforce <-> Tally sync agent. Salesforce is the control plane: which objects,
 // which direction, on what schedule, and the field mapping all live in SF (Sync_Config__c +
@@ -43,7 +43,7 @@ const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE'];
  * the watermark. A bounded field list is used (never FETCH * over the whole collection).
  */
 export async function syncToSalesforce(
-    spec: ObjectSpec, config: SyncConfig, dist: DistributorRef, server: string, port: number,
+    spec: ObjectSpec, config: SyncConfig, acct: AccountRef, server: string, port: number,
     opts: { dryRun?: boolean; log?: LogFn } = {},
 ): Promise<ToSfResult> {
     const log = opts.log || (() => { });
@@ -53,7 +53,7 @@ export async function syncToSalesforce(
 
     // Tally row keys are lowercased by parseCollection, so match ToSalesforce source (a Tally
     // field name) case-insensitively; the SF-side target stays exactly as authored.
-    const maps = (await loadMappings(spec.objectType, 'ToSalesforce')).map(m => ({ ...m, source: m.source?.toLowerCase() }));
+    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapCode)).map(m => ({ ...m, source: m.source?.toLowerCase() }));
     if (!maps.length) {
         log(`[agent] no active ToSalesforce mappings for ${spec.objectType} — nothing to do`, true);
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
@@ -93,7 +93,7 @@ export async function syncToSalesforce(
             [spec.externalId]: row.guid,
             Tally_AlterId__c: alterId,
             Tally_Voucher_Number__c: row.vouchernumber || mapped.Tally_Voucher_Number__c || '',
-            Distributor__c: dist.id,
+            SAP_Company_Code__c: acct.sapCode,
             Direction__c: 'ToSalesforce',
             Sync_Status__c: 'Done',
             Error__c: '',
@@ -157,14 +157,15 @@ export interface ToTallyResult { pending: number; created: number; failed: numbe
 
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally, then write status back. */
-export async function syncToTally(spec: ObjectSpec, server: string, port: number, opts: { dryRun?: boolean; log?: LogFn } = {}): Promise<ToTallyResult> {
+export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: string, port: number, opts: { dryRun?: boolean; log?: LogFn } = {}): Promise<ToTallyResult> {
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
-    const maps = await loadMappings(spec.objectType, 'ToTally');
+    const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapCode);
     if (!maps.length) { log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true); return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] }; }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source!))];
-    const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending'`;
+    const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} ` +
+        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Company_Code__c = '${acct.sapCode.replace(/'/g, "\\'")}'`;
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
     const res: ToTallyResult = { pending: rows.length, created: 0, failed: 0, errors: [] };

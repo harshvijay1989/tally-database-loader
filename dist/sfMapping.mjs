@@ -1,15 +1,36 @@
 import { sfQuery } from './sfClient.mjs';
-/** Download the active mappings for one object + direction, in sort order. */
-export async function loadMappings(objectType, direction) {
-    const rows = await sfQuery(`SELECT Source_Field__c, Target_Field__c, Constant_Value__c, Transform__c FROM Field_Mapping__c ` +
-        `WHERE Object_Type__c = '${objectType}' AND Direction__c = '${direction}' AND Active__c = true ` +
+/**
+ * Download the active mappings for one object + direction, in sort order. Scoped to this
+ * distributor by SAP code: a per-distributor override (Account set to this code) plus the
+ * shared defaults (Account blank). A per-distributor row wins over a default for the same
+ * target field. Omit sapCode to load only the shared defaults.
+ */
+export async function loadMappings(objectType, direction, sapCode) {
+    const scope = sapCode
+        ? `AND (Account__c = null OR Account__r.SAP_Company_Code__c = '${sapCode.replace(/'/g, "\\'")}')`
+        : `AND Account__c = null`;
+    const rows = await sfQuery(`SELECT Source_Field__c, Target_Field__c, Constant_Value__c, Transform__c, Account__c FROM Field_Mapping__c ` +
+        `WHERE Object_Type__c = '${objectType}' AND Direction__c = '${direction}' AND Active__c = true ${scope} ` +
         `ORDER BY Sort_Order__c NULLS LAST`);
-    return rows.map(r => ({
+    // A per-distributor row (Account set) overrides a default (Account blank) for the same target.
+    // Keep the query's Sort_Order; just drop defaults whose target has an override, and any dupes.
+    const overridden = new Set(rows.filter(r => r.Account__c).map(r => r.Target_Field__c));
+    const seen = new Set();
+    return rows.filter(r => {
+        if (!r.Target_Field__c)
+            return false;
+        if (!r.Account__c && overridden.has(r.Target_Field__c))
+            return false; // default shadowed by override
+        if (seen.has(r.Target_Field__c))
+            return false;
+        seen.add(r.Target_Field__c);
+        return true;
+    }).map(r => ({
         source: r.Source_Field__c || undefined,
         target: r.Target_Field__c,
         constant: (r.Constant_Value__c != null && r.Constant_Value__c !== '') ? r.Constant_Value__c : undefined,
         transform: r.Transform__c || undefined,
-    })).filter(m => m.target);
+    }));
 }
 /** Apply a single transform token to a value. Extend as new transforms are needed. */
 export function applyTransform(v, t) {

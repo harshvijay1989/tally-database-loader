@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { loadSyncConfigs, resolveDistributor, isDue, type SyncConfig } from './sfConfig.mjs';
+import { loadSyncConfigs, resolveAccount, isDue } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally, type LogFn } from './sfAgent.mjs';
 import { logToTrigger } from './sfLog.mjs';
 
@@ -28,13 +28,13 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
     const sapCode = bakedSapCode();
     if (!sapCode) { log('[runner] no distributor SAP code configured (connections.json.distributor.sapCode)', true); return reports; }
 
-    const dist = await resolveDistributor(sapCode);
-    if (!dist) {
-        log(`[runner] no Distributor__c in Salesforce for SAP code ${sapCode} — cannot sync`, true);
-        await logToTrigger({ operation: 'Cycle', status: 'Error', errorMessage: `No Distributor__c for SAP code ${sapCode}` });
+    const acct = await resolveAccount(sapCode);
+    if (!acct) {
+        log(`[runner] no Account in Salesforce with SAP_Company_Code__c = ${sapCode} — cannot sync`, true);
+        await logToTrigger({ operation: 'Cycle', status: 'Error', errorMessage: `No Account for SAP code ${sapCode}` });
         return reports;
     }
-    log(`[runner] distributor ${dist.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
+    log(`[runner] distributor ${acct.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
 
     // ---- Tally -> Salesforce (read) ----
     const toSf = await loadSyncConfigs(sapCode, 'ToSalesforce');
@@ -43,7 +43,7 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
         if (!spec) { log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true); continue; }
         if (!opts.force && !isDue(cfg, Date.now())) { log(`[runner] ${cfg.objectType} Tally->SF not due yet (every ${cfg.frequencyMinutes}m)`); continue; }
         try {
-            const r = await syncToSalesforce(spec, cfg, dist, opts.server, opts.port, { dryRun: opts.dryRun, log });
+            const r = await syncToSalesforce(spec, cfg, acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
             const ok = r.failed === 0 && r.errors.length === 0; // a Tally-down read reports errors with failed=0
             reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok, detail: `fetched ${r.fetched}, upserted ${r.upserted}, failed ${r.failed}${r.errors.length ? ` — ${r.errors[0]}` : ''}` });
         } catch (e: any) {
@@ -59,7 +59,7 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
         if (!spec) { log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true); continue; }
         if (!opts.force && !isDue(cfg, Date.now())) { log(`[runner] ${cfg.objectType} SF->Tally not due yet (every ${cfg.frequencyMinutes}m)`); continue; }
         try {
-            const r = await syncToTally(spec, opts.server, opts.port, { dryRun: opts.dryRun, log });
+            const r = await syncToTally(spec, acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
             reports.push({ direction: 'ToTally', objectType: cfg.objectType, ok: r.failed === 0, detail: `pending ${r.pending}, created ${r.created}, failed ${r.failed}` });
         } catch (e: any) {
             log(`[runner] ${cfg.objectType} SF->Tally errored: ${e?.message || e}`, true);

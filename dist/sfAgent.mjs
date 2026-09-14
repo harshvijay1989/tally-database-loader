@@ -16,14 +16,14 @@ const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE'];
  * resumable), maps them with the SF-authored mapping, upserts staging by GUID, and advances
  * the watermark. A bounded field list is used (never FETCH * over the whole collection).
  */
-export async function syncToSalesforce(spec, config, dist, server, port, opts = {}) {
+export async function syncToSalesforce(spec, config, acct, server, port, opts = {}) {
     const log = opts.log || (() => { });
     const startedAt = new Date();
     const res = { fetched: 0, upserted: 0, failed: 0, newWatermark: config.lastAlterId, errors: [] };
     log(`[agent] ${spec.objectType} Tally->SF: starting (watermark AlterID>${config.lastAlterId})${opts.dryRun ? ' (dry-run)' : ''}`);
     // Tally row keys are lowercased by parseCollection, so match ToSalesforce source (a Tally
     // field name) case-insensitively; the SF-side target stays exactly as authored.
-    const maps = (await loadMappings(spec.objectType, 'ToSalesforce')).map(m => ({ ...m, source: m.source?.toLowerCase() }));
+    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapCode)).map(m => ({ ...m, source: m.source?.toLowerCase() }));
     if (!maps.length) {
         log(`[agent] no active ToSalesforce mappings for ${spec.objectType} — nothing to do`, true);
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
@@ -63,7 +63,7 @@ export async function syncToSalesforce(spec, config, dist, server, port, opts = 
             [spec.externalId]: row.guid,
             Tally_AlterId__c: alterId,
             Tally_Voucher_Number__c: row.vouchernumber || mapped.Tally_Voucher_Number__c || '',
-            Distributor__c: dist.id,
+            SAP_Company_Code__c: acct.sapCode,
             Direction__c: 'ToSalesforce',
             Sync_Status__c: 'Done',
             Error__c: '',
@@ -124,17 +124,18 @@ export function assembleVoucher(objectType, logical) {
 }
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally, then write status back. */
-export async function syncToTally(spec, server, port, opts = {}) {
+export async function syncToTally(spec, acct, server, port, opts = {}) {
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
-    const maps = await loadMappings(spec.objectType, 'ToTally');
+    const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapCode);
     if (!maps.length) {
         log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true);
         return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] };
     }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source))];
-    const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending'`;
+    const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} ` +
+        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Company_Code__c = '${acct.sapCode.replace(/'/g, "\\'")}'`;
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
     const res = { pending: rows.length, created: 0, failed: 0, errors: [] };

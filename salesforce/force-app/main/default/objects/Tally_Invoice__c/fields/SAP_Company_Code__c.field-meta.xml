@@ -2,10 +2,8 @@
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>SAP_Company_Code__c</fullName>
     <label>SAP Company Code</label>
-    <description>Distributor identity, keyed to Account.SAP_Company_Code__c. Baked into the connector build; used to load this distributor's Sync_Config__c and stamp records.</description>
+    <description>Which distributor this row belongs to = Account.SAP_Company_Code__c, stamped by the connector.</description>
     <length>40</length>
     <type>Text</type>
-    <externalId>true</externalId>
-    <unique>true</unique>
     <required>false</required>
 </CustomField>

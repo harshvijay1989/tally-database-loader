@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Account__c</fullName>
+    <label>Distributor Account</label>
+    <description>The distributor this mapping belongs to. Blank = a default mapping shared by all distributors; set = a per-distributor override (matched on Account.SAP_Company_Code__c).</description>
+    <referenceTo>Account</referenceTo>
+    <relationshipLabel>Tally Field Mappings</relationshipLabel>
+    <relationshipName>Tally_Field_Mappings</relationshipName>
+    <required>false</required>
+    <type>Lookup</type>
+</CustomField>

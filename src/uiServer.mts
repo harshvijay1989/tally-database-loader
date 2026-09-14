@@ -5,6 +5,7 @@ import child_process from 'node:child_process';
 import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
 import { httpFetch } from './httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
+import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP code against Account.SAP_Company_Code__c
 
 // App version (for logs), read from package.json; falls back if unreadable.
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync('./package.json', 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
@@ -71,13 +72,14 @@ function mapSlug(name: string) { return (String(name).replace(/[^a-zA-Z0-9 _-]/g
 // --- connections.json -------------------------------------------------------
 interface SfConn { instanceUrl?: string; clientId?: string; clientSecret?: string; apiVersion?: string; loginUrl?: string; refreshToken?: string; }
 interface GoogleConn { clientId?: string; clientSecret?: string; refreshToken?: string; folderId?: string; }
-interface Connections { salesforce: SfConn; google: GoogleConn; }
+interface DistributorConn { sapCode?: string; }  // this connector's distributor identity = Account.SAP_Company_Code__c
+interface Connections { salesforce: SfConn; google: GoogleConn; distributor: DistributorConn; }
 
 function loadConn(): Connections {
     try {
         const c = JSON.parse(fs.readFileSync(CONN_FILE, 'utf8'));
-        return { salesforce: c.salesforce || {}, google: c.google || {} };
-    } catch { return { salesforce: {}, google: {} }; }
+        return { salesforce: c.salesforce || {}, google: c.google || {}, distributor: c.distributor || {} };
+    } catch { return { salesforce: {}, google: {}, distributor: {} }; }
 }
 function saveConn(c: Connections) { fs.writeFileSync(CONN_FILE, JSON.stringify(c, null, 2)); }
 
@@ -627,6 +629,28 @@ const server = http.createServer(async (req, res) => {
             saveConn(c); gCache = null;
             logLine(`Google connection settings saved${c.google.folderId ? ` (folder ${c.google.folderId})` : ''}`);
             return json(200, { saved: true });
+        }
+
+        // --- Distributor identity (SAP company code) ---
+        if (url.pathname === '/api/distributor' && req.method === 'GET') {
+            return json(200, { sapCode: loadConn().distributor.sapCode || '' });
+        }
+        if (url.pathname === '/api/distributor' && req.method === 'POST') {
+            const b = JSON.parse(await readBody(req));
+            const sapCode = String(b.sapCode || '').trim();
+            const c = loadConn();
+            c.distributor.sapCode = sapCode;
+            saveConn(c);
+            logLine(`Distributor SAP code saved (${sapCode || 'cleared'})`);
+            if (!sapCode) return json(200, { saved: true, verified: false });
+            // Verify against the Salesforce Account, same path the sync agent uses.
+            try {
+                const acct = await resolveAccount(sapCode);
+                if (acct) return json(200, { saved: true, verified: true, accountName: acct.name });
+                return json(200, { saved: true, verified: false, error: `No Salesforce Account has SAP code "${sapCode}"` });
+            } catch (e: any) {
+                return json(200, { saved: true, verified: false, error: `Saved, but could not verify: ${String(e?.message || e)}` });
+            }
         }
 
         // --- Salesforce connect / test ---

@@ -4,15 +4,6 @@
     <description>CRUD + field access on the Tally sync objects for the integration user.</description>
     <hasActivationRequired>false</hasActivationRequired>
     <objectPermissions>
-        <object>Distributor__c</object>
-        <allowCreate>true</allowCreate>
-        <allowRead>true</allowRead>
-        <allowEdit>true</allowEdit>
-        <allowDelete>true</allowDelete>
-        <viewAllRecords>true</viewAllRecords>
-        <modifyAllRecords>true</modifyAllRecords>
-    </objectPermissions>
-    <objectPermissions>
         <object>Sync_Config__c</object>
         <allowCreate>true</allowCreate>
         <allowRead>true</allowRead>
@@ -58,22 +49,7 @@
         <modifyAllRecords>true</modifyAllRecords>
     </objectPermissions>
     <fieldPermissions>
-        <field>Distributor__c.External_Id__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Distributor__c.Enabled__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Distributor__c.SAP_Company_Code__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Sync_Config__c.Distributor__c</field>
+        <field>Sync_Config__c.Account__c</field>
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
@@ -128,7 +104,7 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
-        <field>Tally_Invoice__c.Distributor__c</field>
+        <field>Tally_Invoice__c.SAP_Company_Code__c</field>
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
@@ -183,6 +159,11 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Field_Mapping__c.Account__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Field_Mapping__c.Object_Type__c</field>
         <readable>true</readable>
         <editable>true</editable>
@@ -223,12 +204,7 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
-        <field>Field_Mapping__c.Distributor__c</field>
-        <readable>true</readable>
-        <editable>true</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Tally_Purchase__c.Distributor__c</field>
+        <field>Tally_Purchase__c.SAP_Company_Code__c</field>
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
@@ -317,10 +293,6 @@
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
-    <tabSettings>
-        <tab>Distributor__c</tab>
-        <visibility>Visible</visibility>
-    </tabSettings>
     <tabSettings>
         <tab>Sync_Config__c</tab>
         <visibility>Visible</visibility>
