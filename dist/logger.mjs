@@ -3,10 +3,8 @@ import util from 'node:util';
 import process from 'node:process';
 import { utility } from './utility.mjs';
 class _logger {
-    streamMessage;
-    streamError;
-    flgErrorLogged = false;
     constructor() {
+        this.flgErrorLogged = false;
         if (fs.existsSync('./import-log.txt'))
             fs.rmSync('./import-log.txt');
         if (fs.existsSync('./error-log.txt'))

@@ -4,9 +4,10 @@ import { SPECS, syncToSalesforce, syncToTally } from './sfAgent.mjs';
 import { logToTrigger } from './sfLog.mjs';
 /** The distributor's SAP company code is baked into the per-distributor build. */
 export function bakedSapCode() {
+    var _a, _b;
     try {
         const c = JSON.parse(fs.readFileSync('./connections.json', 'utf8'));
-        return c.distributor?.sapCode || c.salesforce?.sapCode || '';
+        return ((_a = c.distributor) === null || _a === void 0 ? void 0 : _a.sapCode) || ((_b = c.salesforce) === null || _b === void 0 ? void 0 : _b.sapCode) || '';
     }
     catch {
         return '';
@@ -49,8 +50,8 @@ export async function runCycle(opts) {
             reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok, detail: `fetched ${r.fetched}, upserted ${r.upserted}, failed ${r.failed}${r.errors.length ? ` — ${r.errors[0]}` : ''}` });
         }
         catch (e) {
-            log(`[runner] ${cfg.objectType} Tally->SF errored: ${e?.message || e}`, true);
-            reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok: false, detail: String(e?.message || e) });
+            log(`[runner] ${cfg.objectType} Tally->SF errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+            reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
         }
     }
     // ---- Salesforce -> Tally (write) ----
@@ -72,8 +73,8 @@ export async function runCycle(opts) {
             reports.push({ direction: 'ToTally', objectType: cfg.objectType, ok: r.failed === 0, detail: `pending ${r.pending}, created ${r.created}, failed ${r.failed}` });
         }
         catch (e) {
-            log(`[runner] ${cfg.objectType} SF->Tally errored: ${e?.message || e}`, true);
-            reports.push({ direction: 'ToTally', objectType: cfg.objectType, ok: false, detail: String(e?.message || e) });
+            log(`[runner] ${cfg.objectType} SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+            reports.push({ direction: 'ToTally', objectType: cfg.objectType, ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
         }
     }
     log(`[runner] cycle done — ${reports.length} action(s)`);

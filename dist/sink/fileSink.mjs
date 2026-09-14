@@ -4,7 +4,6 @@ import { jsonToCsv } from './rowCodec.mjs';
 // guard on capabilities). This encapsulates the file-writing orchestration that used
 // to live inline in tally.mts. See docs/architecture-sink.md.
 export class FileSink {
-    config;
     constructor(config) {
         this.config = config;
     }

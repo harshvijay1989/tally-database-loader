@@ -82,7 +82,7 @@ export function describeError(e) {
     if (e == null)
         return 'unknown error';
     if (Array.isArray(e.errors) && e.errors.length) {
-        const codes = [...new Set(e.errors.map((x) => x?.code || x?.message || String(x)))];
+        const codes = [...new Set(e.errors.map((x) => (x === null || x === void 0 ? void 0 : x.code) || (x === null || x === void 0 ? void 0 : x.message) || String(x)))];
         return `${e.message || 'AggregateError'} [${codes.join(', ')}]`;
     }
     const parts = [];
@@ -220,7 +220,7 @@ export async function fetchCollectionFields(server, port, tallyType, fetchList, 
         return { rows: clean, fields };
     }
     catch (e) {
-        log(`${tallyType}: fetch failed - ${e?.message || e}`, true);
+        log(`${tallyType}: fetch failed - ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
         return { rows: [], fields: [] };
     }
 }

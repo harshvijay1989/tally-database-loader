@@ -49,5 +49,5 @@ async function main() {
         console.log(`${r.ok ? 'OK ' : 'ERR'} ${r.direction} ${r.objectType}: ${r.detail}`);
     process.exit(reports.some(r => !r.ok) ? 1 : 0);
 }
-main().catch(e => { console.error('cycle failed:', e?.message || e); process.exit(1); });
+main().catch(e => { console.error('cycle failed:', (e === null || e === void 0 ? void 0 : e.message) || e); process.exit(1); });
 //# sourceMappingURL=runSync.mjs.map

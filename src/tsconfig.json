@@ -2,7 +2,8 @@
     "compilerOptions": {
         /* Basic Options */
         "moduleResolution": "NodeNext",
-        "target": "es2024", /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017','ES2018' or 'ESNEXT'. */
+        "target": "es2019", /* ES2019 so tsc down-compiles ?. / ?? etc. to run on Node 12 (Windows 7 build) as well as modern Node. */
+        "lib": ["es2022"], /* type-check against newer built-ins (deps' .d.ts reference them); does NOT change the es2019 emit. */
         "module": "NodeNext", /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */
         "outDir": "../dist",
         "rootDir": "./",

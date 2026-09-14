@@ -33,7 +33,7 @@ const toRate = (v) => toNum(String(v || '').split('/')[0]);
 export async function loadStockItemSapIds(server, port, sapCode, log) {
     const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
     const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
-    const sourceField = (m?.source || 'partno').toLowerCase(); // default: Tally Part Number
+    const sourceField = ((m === null || m === void 0 ? void 0 : m.source) || 'partno').toLowerCase(); // default: Tally Part Number
     const out = new Map();
     try {
         const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,${sourceField.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
@@ -46,7 +46,7 @@ export async function loadStockItemSapIds(server, port, sapCode, log) {
         log(`  stock-item SAP ids: ${out.size} mapped (from '${sourceField}')`);
     }
     catch (e) {
-        log(`  stock-item master read failed — ${e?.message || e}`, true);
+        log(`  stock-item master read failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
     }
     return out;
 }
@@ -89,7 +89,7 @@ export async function syncToSalesforce(spec, config, acct, server, port, opts = 
     log(`[agent] ${spec.objectType} Tally->SF: starting (watermark AlterID>${config.lastAlterId})${opts.dryRun ? ' (dry-run)' : ''}`);
     // Tally row keys are lowercased by parseCollection, so match ToSalesforce source (a Tally
     // field name) case-insensitively; the SF-side target stays exactly as authored.
-    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapCode)).map(m => ({ ...m, source: m.source?.toLowerCase() }));
+    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapCode)).map(m => { var _a; return ({ ...m, source: (_a = m.source) === null || _a === void 0 ? void 0 : _a.toLowerCase() }); });
     if (!maps.length) {
         log(`[agent] no active ToSalesforce mappings for ${spec.objectType} — nothing to do`, true);
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
@@ -262,7 +262,7 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
 async function loadStockItemBySap(server, port, sapCode, log) {
     const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
     const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
-    const src = (m?.source || 'partno').toLowerCase();
+    const src = ((m === null || m === void 0 ? void 0 : m.source) || 'partno').toLowerCase();
     const out = new Map();
     try {
         const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,BASEUNITS,${src.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
@@ -273,7 +273,7 @@ async function loadStockItemBySap(server, port, sapCode, log) {
         }
     }
     catch (e) {
-        log(`  stock-item reverse map failed — ${e?.message || e}`, true);
+        log(`  stock-item reverse map failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
     }
     return out;
 }
@@ -297,7 +297,7 @@ async function loadPendingLines(spec, headerIds, sapCode, log) {
         }
     }
     catch (e) {
-        log(`  line read failed — ${e?.message || e}`, true);
+        log(`  line read failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
     }
     return out;
 }

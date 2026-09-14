@@ -142,10 +142,10 @@ export async function createLedger(server, port, name, parentGroup) {
 export async function ensureLedger(server, port, name, parentGroup, log) {
     if (await ledgerExists(server, port, name))
         return true;
-    log?.(`ledger '${name}' missing — creating under '${parentGroup}'`);
+    log === null || log === void 0 ? void 0 : log(`ledger '${name}' missing — creating under '${parentGroup}'`);
     const r = await createLedger(server, port, name, parentGroup);
     if (!r.ok)
-        log?.(`failed to create ledger '${name}': ${r.message}`, true);
+        log === null || log === void 0 ? void 0 : log(`failed to create ledger '${name}': ${r.message}`, true);
     return r.ok;
 }
 //# sourceMappingURL=tallyImport.mjs.map

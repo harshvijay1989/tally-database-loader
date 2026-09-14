@@ -9,23 +9,22 @@ import { utility } from './utility.mjs';
 import { logger } from './logger.mjs';
 import { getSink } from './sink/sink.mjs';
 class _tally {
-    config;
-    lastAlterIdMaster = 0;
-    lastAlterIdTransaction = 0;
-    isDefinitionYAML = true;
-    lstTableMasterYaml = [];
-    lstTableTransactionYaml = [];
-    lstTableYaml = [];
-    lstTallyCollectionDefinitionJson = [];
-    lstDatabaseTableDefinitionJson = [];
-    lstCollectionDataCache = new Map();
-    //hidden commandline flags
-    importMaster = true;
-    importTransaction = true;
-    truncateTable = true;
-    periodFromDate = null;
-    periodToDate = null;
     constructor() {
+        this.lastAlterIdMaster = 0;
+        this.lastAlterIdTransaction = 0;
+        this.isDefinitionYAML = true;
+        this.lstTableMasterYaml = [];
+        this.lstTableTransactionYaml = [];
+        this.lstTableYaml = [];
+        this.lstTallyCollectionDefinitionJson = [];
+        this.lstDatabaseTableDefinitionJson = [];
+        this.lstCollectionDataCache = new Map();
+        //hidden commandline flags
+        this.importMaster = true;
+        this.importTransaction = true;
+        this.truncateTable = true;
+        this.periodFromDate = null;
+        this.periodToDate = null;
         try {
             this.config = JSON.parse(fs.readFileSync('./config.json', 'utf8'))['tally'];
         }
@@ -82,6 +81,7 @@ class _tally {
     }
     importData() {
         return new Promise(async (resolve, reject) => {
+            var _a;
             let sink = getSink();
             try {
                 logger.logMessage('Tally to Database | version: 1.0.43');
@@ -357,7 +357,7 @@ class _tally {
                             }
                         }
                         else { // default to active company
-                            this.config.company = lstCompanies[0]?.name || '';
+                            this.config.company = ((_a = lstCompanies[0]) === null || _a === void 0 ? void 0 : _a.name) || '';
                         }
                         //select target period
                         if (this.config.fromdate.toLowerCase() == 'auto' || this.config.todate.toLowerCase() == 'auto') {
@@ -460,9 +460,10 @@ class _tally {
                             else {
                                 let lstVoucherCollectionData = [];
                                 const processVoucherCollectionDateRange = async (periodStartDate, periodEndDate, batchCtr = 0) => {
+                                    var _a;
                                     let timestampBegin = Date.now();
                                     let targetCollection = this.lstTallyCollectionDefinitionJson.filter(p => p.collection == 'voucher')[0];
-                                    targetCollection.filters?.push({
+                                    (_a = targetCollection.filters) === null || _a === void 0 ? void 0 : _a.push({
                                         name: 'fltrPeriod',
                                         expression: `$Date &gt;= $$Date:"${utility.Date.format(periodStartDate, 'yyyyMMdd')}" and $Date &lt;= $$Date:"${utility.Date.format(periodEndDate, 'yyyyMMdd')}"`
                                     });
@@ -1056,6 +1057,7 @@ class _tally {
         let retval = [];
         try {
             const extractFieldValueFromSourceObject = (targetField, sourceDataObjTree) => {
+                var _a;
                 let retval = undefined;
                 let targetFieldName = targetField.source;
                 //search for the field from inner most object to outer most object
@@ -1079,7 +1081,7 @@ class _tally {
                 else if (typeof retval === 'string' && targetField.datatype == 'boolean') {
                     retval = retval === 'Yes';
                 }
-                else if (Array.isArray(retval) && retval.length == 1 && !targetField.transform?.concat) {
+                else if (Array.isArray(retval) && retval.length == 1 && !((_a = targetField.transform) === null || _a === void 0 ? void 0 : _a.concat)) {
                     retval = retval[0]; //unwrap single item array if no concat transformation specified
                 }
                 // handle transformation if specified

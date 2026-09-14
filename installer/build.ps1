@@ -23,10 +23,12 @@
 [CmdletBinding()]
 param(
     [string]$Version = '1.0.0',
-    # Build the Windows 7/8 variant: bundle Node 14 (the last runtime that supports
-    # those OSes) instead of the build machine's Node, and name the output -win7.
+    # Build the Windows 7/8 variant: bundle Node 12.22.12 instead of the build machine's Node,
+    # and name the output -win7. Node 14+ links GetHostNameW (a Windows 8+ API) and fails to
+    # load on Windows 7; Node 12 is the last line that runs on Win7 SP1. The connector's dist
+    # is compiled to ES2019 so it runs on Node 12 as well as modern Node.
     [switch]$Win7,
-    [string]$Node14Url = 'https://nodejs.org/dist/v14.21.3/win-x64/node.exe'
+    [string]$Win7NodeUrl = 'https://nodejs.org/dist/v12.22.12/win-x64/node.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,17 +119,17 @@ New-Item -ItemType Directory -Path (Join-Path $payload 'node') -Force | Out-Null
 $bundleNode = $nodeExe
 $variant = ''
 if ($Win7) {
-    # Bundle Node 14 (last version that runs on Windows 7 SP1 / 8 / 8.1). Cached so
-    # repeat builds don't re-download. The connector code is fetch-free, so it runs on 14.
+    # Bundle Node 12.22.12 (last line that runs on Windows 7 SP1 / 8 / 8.1). Cached so repeat
+    # builds don't re-download. dist is compiled to ES2019 (fetch-free), so it runs on Node 12.
     $variant = '-win7'
-    $cacheDir = Join-Path $build 'node14-cache'
+    $cacheDir = Join-Path $build 'node12-cache'
     New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
     $bundleNode = Join-Path $cacheDir 'node.exe'
     if (-not (Test-Path $bundleNode)) {
-        Write-Host "Downloading Node 14 for the Win7/8 build: $Node14Url"
-        Invoke-WebRequest -Uri $Node14Url -OutFile $bundleNode
+        Write-Host "Downloading Node 12 for the Win7/8 build: $Win7NodeUrl"
+        Invoke-WebRequest -Uri $Win7NodeUrl -OutFile $bundleNode
     }
-    Write-Host 'WARNING: the Win7/8 build bundles Node 14, which is end-of-life (no security updates).' -ForegroundColor Yellow
+    Write-Host 'WARNING: the Win7/8 build bundles Node 12, which is end-of-life (no security updates).' -ForegroundColor Yellow
 }
 Copy-Item $bundleNode (Join-Path $payload 'node\node.exe') -Force
 $nodeVer = (& $bundleNode --version)

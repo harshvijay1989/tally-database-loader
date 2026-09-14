@@ -19,7 +19,7 @@ async function tick(getTally, log) {
         state.lastError = null;
     }
     catch (e) {
-        state.lastError = String(e?.message || e);
+        state.lastError = String((e === null || e === void 0 ? void 0 : e.message) || e);
         log(`[scheduler] tick failed: ${state.lastError}`, true);
     }
     finally {
@@ -74,7 +74,7 @@ export async function schedulerStatus() {
         return { ...base, distributor: acct.name, sapCode, configs };
     }
     catch (e) {
-        return { ...base, configs: [], note: `Could not load config: ${String(e?.message || e)}` };
+        return { ...base, configs: [], note: `Could not load config: ${String((e === null || e === void 0 ? void 0 : e.message) || e)}` };
     }
 }
 //# sourceMappingURL=scheduler.mjs.map

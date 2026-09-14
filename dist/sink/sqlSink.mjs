@@ -13,9 +13,6 @@ let connectionPoolMysql;
 // behaviour is byte-identical; the three concrete subclasses exist for identity and
 // future divergence. See docs/architecture-sink.md.
 export class SqlSink {
-    config;
-    maxQuerySize = 65535; //maximum size of SQL query to be executed
-    connectionPoolPostgres = new postgres.Pool({});
     get capabilities() {
         return {
             sql: true,
@@ -29,6 +26,8 @@ export class SqlSink {
         return this.config.technology;
     }
     constructor(config) {
+        this.maxQuerySize = 65535; //maximum size of SQL query to be executed
+        this.connectionPoolPostgres = new postgres.Pool({});
         this.config = config;
         // modify max query size for different database technology
         if (this.config.technology == 'mysql') {
@@ -703,7 +702,7 @@ export class SqlSink {
                         let errorDescription = '';
                         if (msg.message.includes('invalid column length')) {
                             let regCol = msg.message.match(/\d+/g);
-                            let fieldIndex = regCol?.length == 1 ? parseInt(regCol[0]) : -1;
+                            let fieldIndex = (regCol === null || regCol === void 0 ? void 0 : regCol.length) == 1 ? parseInt(regCol[0]) : -1;
                             let fieldName = lstColumnInfo[fieldIndex].fieldName;
                             errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                         }
@@ -772,7 +771,7 @@ export class SqlSink {
                     let errorDescription = '';
                     if (msg.message.includes('invalid column length')) {
                         let regCol = msg.message.match(/\d+/g);
-                        let fieldIndex = regCol?.length == 1 ? parseInt(regCol[0]) : -1;
+                        let fieldIndex = (regCol === null || regCol === void 0 ? void 0 : regCol.length) == 1 ? parseInt(regCol[0]) : -1;
                         let fieldName = lstColumnInfo[fieldIndex - 1].fieldName; //-1 as column index in error message is 1-based
                         errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                     }
@@ -817,7 +816,7 @@ export class SqlSink {
                         let errorDescription = '';
                         if (msg.message.includes('invalid column length')) {
                             let regCol = msg.message.match(/\d+/g);
-                            let fieldIndex = regCol?.length == 1 ? parseInt(regCol[0]) : -1;
+                            let fieldIndex = (regCol === null || regCol === void 0 ? void 0 : regCol.length) == 1 ? parseInt(regCol[0]) : -1;
                             let fieldName = targetTable.fields[fieldIndex - 1].name; //-1 as column index in error message is 1-based
                             errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                         }
@@ -892,7 +891,7 @@ export class SqlSink {
                     let errorDescription = '';
                     if (msg.message.includes('invalid column length')) {
                         let regCol = msg.message.match(/\d+/g);
-                        let fieldIndex = regCol?.length == 1 ? parseInt(regCol[0]) : -1;
+                        let fieldIndex = (regCol === null || regCol === void 0 ? void 0 : regCol.length) == 1 ? parseInt(regCol[0]) : -1;
                         let fieldName = targetTable.fields[fieldIndex - 1].name; //-1 as column index in error message is 1-based
                         errorDescription = `\r\nText value in the field "${fieldName}" is too long to accomodate in database.\r\nConsider increasing the field length in database.`;
                     }

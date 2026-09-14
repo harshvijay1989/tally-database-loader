@@ -132,7 +132,7 @@ export async function sfUpsert(object, externalIdField, records, log) {
             }
         }
     }
-    log?.(`${object}: upserted ${res.success}, failed ${res.failed}`);
+    log === null || log === void 0 ? void 0 : log(`${object}: upserted ${res.success}, failed ${res.failed}`);
     return res;
 }
 //# sourceMappingURL=sfClient.mjs.map

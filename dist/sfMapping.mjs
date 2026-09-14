@@ -26,6 +26,7 @@ export function setOverride(objectType, direction, rows) {
 }
 /** Merge local overrides over a set of SF default maps (local wins, keyed by target). */
 function mergeOverrides(objectType, direction, sfMaps) {
+    var _a, _b;
     const ov = getOverride(objectType, direction);
     if (!Object.keys(ov).length)
         return sfMaps;
@@ -38,8 +39,8 @@ function mergeOverrides(objectType, direction, sfMaps) {
         const base = byTarget.get(target) || { target };
         byTarget.set(target, {
             ...base,
-            source: row.source ?? base.source,
-            transform: row.transform ?? base.transform,
+            source: (_a = row.source) !== null && _a !== void 0 ? _a : base.source,
+            transform: (_b = row.transform) !== null && _b !== void 0 ? _b : base.transform,
             constant: (row.constant != null && row.constant !== '') ? row.constant : base.constant,
         });
     }

@@ -193,6 +193,7 @@ async function googleEmail(token) {
     }
 }
 async function driveUpload(token, folderId, name, csv) {
+    var _a;
     const metadata = { name, mimeType: 'text/csv' };
     if (folderId)
         metadata.parents = [folderId];
@@ -204,7 +205,7 @@ async function driveUpload(token, folderId, name, csv) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok)
-        throw new Error(`Drive upload failed: ${data.error?.message || resp.status}`);
+        throw new Error(`Drive upload failed: ${((_a = data.error) === null || _a === void 0 ? void 0 : _a.message) || resp.status}`);
     return data;
 }
 function readBody(req) {
@@ -582,7 +583,7 @@ async function runGoogleDrive(mapping, emit, getRows) {
             emit({ type: 'object', sourceObject: om.sourceObject, targetObject: outName, total: rows.length, success: rows.length, failed: 0, errors: [`Uploaded ${up.name}${up.webViewLink ? ` — ${up.webViewLink}` : ''}`] });
         }
         catch (e) {
-            emit({ type: 'object', sourceObject: om.sourceObject, targetObject: outName, total: rows.length, success: 0, failed: rows.length, errors: [String(e?.message || e)] });
+            emit({ type: 'object', sourceObject: om.sourceObject, targetObject: outName, total: rows.length, success: 0, failed: rows.length, errors: [String((e === null || e === void 0 ? void 0 : e.message) || e)] });
         }
     }
     emit({ type: 'done' });
@@ -643,6 +644,7 @@ async function runMapping(name, emit) {
     return runSalesforce(mapping, emit, getRows);
 }
 const server = http.createServer(async (req, res) => {
+    var _a;
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
     const send = (code, type, body) => { res.writeHead(code, { 'Content-Type': type }); res.end(body); };
     const json = (code, obj) => send(code, 'application/json', JSON.stringify(obj));
@@ -747,7 +749,7 @@ const server = http.createServer(async (req, res) => {
                 return json(200, { object, scalar: [...scalar].sort(), line: [...line].sort() });
             }
             catch (e) {
-                return json(200, { object, scalar: [], line: [], error: String(e?.message || e) });
+                return json(200, { object, scalar: [], line: [], error: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
         }
         // Salesforce fields of a staging object (for the SF->Tally source picker).
@@ -755,12 +757,12 @@ const server = http.createServer(async (req, res) => {
             const object = url.searchParams.get('object') || '';
             if (!object)
                 return json(400, { error: 'object required' });
-            const staging = SPECS[object]?.stagingObject || object; // accept object type or raw sObject name
+            const staging = ((_a = SPECS[object]) === null || _a === void 0 ? void 0 : _a.stagingObject) || object; // accept object type or raw sObject name
             try {
                 return json(200, { object: staging, fields: await sfDescribeFields(staging) });
             }
             catch (e) {
-                return json(200, { object: staging, fields: [], error: String(e?.message || e) });
+                return json(200, { object: staging, fields: [], error: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
         }
         // --- Field mappings (effective = Salesforce defaults + local edits) ---
@@ -772,7 +774,7 @@ const server = http.createServer(async (req, res) => {
                 return json(200, { object, direction, rows, overrides: getOverride(object, direction) });
             }
             catch (e) {
-                return json(200, { object, direction, rows: [], overrides: {}, error: String(e?.message || e) });
+                return json(200, { object, direction, rows: [], overrides: {}, error: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
         }
         if (url.pathname === '/api/mappings' && req.method === 'POST') {
@@ -831,7 +833,7 @@ const server = http.createServer(async (req, res) => {
                 return json(200, { saved: true, verified: false, error: `No Salesforce Account has SAP code "${sapCode}"` });
             }
             catch (e) {
-                return json(200, { saved: true, verified: false, error: `Saved, but could not verify: ${String(e?.message || e)}` });
+                return json(200, { saved: true, verified: false, error: `Saved, but could not verify: ${String((e === null || e === void 0 ? void 0 : e.message) || e)}` });
             }
         }
         // --- Salesforce connect / test ---
@@ -843,7 +845,7 @@ const server = http.createServer(async (req, res) => {
                 return json(200, { connected: true, user: await sfUsername(a) });
             }
             catch (e) {
-                return json(200, { connected: false, error: String(e?.message || e) });
+                return json(200, { connected: false, error: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
         }
         if (url.pathname === '/api/salesforce/disconnect' && req.method === 'POST') {
@@ -1148,7 +1150,7 @@ const server = http.createServer(async (req, res) => {
         send(404, 'text/plain', 'not found');
     }
     catch (err) {
-        send(500, 'text/plain', String(err?.message || err));
+        send(500, 'text/plain', String((err === null || err === void 0 ? void 0 : err.message) || err));
     }
 });
 // Accept a raw folder id OR a full Drive folder URL and return just the id.

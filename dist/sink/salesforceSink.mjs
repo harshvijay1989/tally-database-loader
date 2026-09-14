@@ -10,11 +10,9 @@ import { httpFetch } from '../httpFetch.mjs'; // fetch-like helper that also run
 // which is not wired yet, so they throw. The real entry point today is upsertObject(),
 // exercised by the smoke test and, later, by the mapping engine.
 export class SalesforceSink {
-    config;
-    creds;
-    accessToken = '';
-    apiBaseUrl = ''; // instance_url returned by the token endpoint
     constructor(config) {
+        this.accessToken = '';
+        this.apiBaseUrl = ''; // instance_url returned by the token endpoint
         this.config = config;
     }
     get capabilities() {
@@ -59,7 +57,8 @@ export class SalesforceSink {
         this.apiBaseUrl = data.instance_url || c.instanceUrl;
     }
     get apiVersion() {
-        return this.creds?.apiVersion || 'v62.0';
+        var _a;
+        return ((_a = this.creds) === null || _a === void 0 ? void 0 : _a.apiVersion) || 'v62.0';
     }
     /**
      * Upsert rows into a Salesforce object, matching on an External ID field.
