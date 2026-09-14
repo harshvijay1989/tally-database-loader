@@ -10,10 +10,13 @@ import { runCycle, bakedSapCode } from './syncRunner.mjs';
 //   node dist/runSync.mjs --force    # ignore schedule (run every due-or-not config now)
 
 function loadTally(): { server: string; port: number } {
+    // Default to 127.0.0.1, not 'localhost': on Windows 'localhost' can resolve to IPv6 ::1
+    // while Tally's gateway binds IPv4 only, giving spurious ECONNREFUSED even when Tally is up.
     try {
         const c = JSON.parse(fs.readFileSync('./config.json', 'utf8')).tally || {};
-        return { server: c.server || 'localhost', port: Number(c.port) || 9000 };
-    } catch { return { server: 'localhost', port: 9000 }; }
+        const server = (!c.server || c.server === 'localhost') ? '127.0.0.1' : c.server;
+        return { server, port: Number(c.port) || 9000 };
+    } catch { return { server: '127.0.0.1', port: 9000 }; }
 }
 
 async function main() {

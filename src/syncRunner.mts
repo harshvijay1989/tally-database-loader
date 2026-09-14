@@ -44,7 +44,8 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
         if (!opts.force && !isDue(cfg, Date.now())) { log(`[runner] ${cfg.objectType} Tally->SF not due yet (every ${cfg.frequencyMinutes}m)`); continue; }
         try {
             const r = await syncToSalesforce(spec, cfg, dist, opts.server, opts.port, { dryRun: opts.dryRun, log });
-            reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok: r.failed === 0, detail: `fetched ${r.fetched}, upserted ${r.upserted}, failed ${r.failed}` });
+            const ok = r.failed === 0 && r.errors.length === 0; // a Tally-down read reports errors with failed=0
+            reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok, detail: `fetched ${r.fetched}, upserted ${r.upserted}, failed ${r.failed}${r.errors.length ? ` — ${r.errors[0]}` : ''}` });
         } catch (e: any) {
             log(`[runner] ${cfg.objectType} Tally->SF errored: ${e?.message || e}`, true);
             reports.push({ direction: 'ToSalesforce', objectType: cfg.objectType, ok: false, detail: String(e?.message || e) });
