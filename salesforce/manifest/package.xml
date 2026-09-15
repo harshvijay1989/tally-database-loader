@@ -204,6 +204,19 @@
         <name>CustomTab</name>
     </types>
     <types>
+        <members>Field_Mapping__c-Field Mapping Layout</members>
+        <members>Sync_Config__c-Sync Config Layout</members>
+        <members>Tally_Invoice_Line__c-Tally Invoice Line Layout</members>
+        <members>Tally_Invoice__c-Tally Invoice Layout</members>
+        <members>Tally_Note_Line__c-Tally Note Line Layout</members>
+        <members>Tally_Note__c-Tally Note Layout</members>
+        <members>Tally_Order_Line__c-Tally Order Line Layout</members>
+        <members>Tally_Order__c-Tally Order Layout</members>
+        <members>Tally_Purchase_Line__c-Tally Purchase Line Layout</members>
+        <members>Tally_Purchase__c-Tally Purchase Layout</members>
+        <name>Layout</name>
+    </types>
+    <types>
         <members>Tally_Sync_Integration</members>
         <name>PermissionSet</name>
     </types>
