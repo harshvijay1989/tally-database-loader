@@ -1,0 +1,13 @@
+SF Field,Tally Source,Type,Notes
+Purchase__c,(parent voucher GUID),Lookup->Tally_Purchase__c,Links the line to its Tally_Purchase__c header
+Stock_Item__c,allinventoryentries.list.stockitemname,Text,Stock item name (distributor Tally)
+Product_SAP_Id__c,Stock Item master -> Part Number (partno),Text,Morde SAP Id (joined from stock-item master by name)
+Quantity__c,allinventoryentries.list.actualqty (number),Number,e.g. 90.00 MT -> 90
+Unit__c,allinventoryentries.list.actualqty (unit),Text,e.g. 90.00 MT -> MT
+Rate__c,allinventoryentries.list.rate,Number,e.g. 35000.00/MT -> 35000
+Discount__c,allinventoryentries.list.discount,Number,
+Amount__c,allinventoryentries.list.amount,Number,Line amount
+Accounting_Ledger__c,allinventoryentries.list.accountingallocations.list.ledgername,Text,GL ledger (e.g. Sales)
+Line_No__c,(row index),Number,Sequence within the voucher
+SAP_Company_Code__c,(distributor code),Text,Stamped from connector SAP code
+Tally_Line_Key__c,voucher GUID + # + line no,Text (ExtId),Idempotent upsert key
