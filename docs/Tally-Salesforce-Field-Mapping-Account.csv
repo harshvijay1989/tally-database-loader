@@ -1,0 +1,19 @@
+Tally Ledger Field,Salesforce Account Field,Type,Notes
+name / ledgername,Name,Standard,Party/customer/supplier name
+guid,Tally_Guid__c,Text (ExtId),Unique key from Tally
+partygstin / gstin,GSTIN__c,Text (ExtId),Recommended MATCH KEY (customers have no SAP Id)
+gstregistrationtype,GST_Registration_Type__c,Text,Regular / Composition / Unregistered
+incometaxnumber,PAN__c,Text,PAN
+parent,Account_Group__c,Text,"Tally group, e.g. Sundry Debtors / Creditors"
+ledgermailingname,Mailing_Name__c,Text,
+address (list),BillingStreet,Standard,Multi-line address
+statename,BillingState,Standard,
+countryname,BillingCountry,Standard,
+pincode,BillingPostalCode,Standard,
+ledgerphone / ledgermobile,Phone,Standard,
+email,Email__c,Email,No standard Account email field
+ledgercontact,Contact_Person__c,Text,
+billcreditperiod,Credit_Period_Days__c,Number,
+creditlimit,Credit_Limit__c,Currency,
+openingbalance,Opening_Balance__c,Currency,
+SAP_Company_Code (this distributor),Parent_Distributor_SAP__c,Text,Which distributor this party belongs to
