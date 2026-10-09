@@ -1,0 +1,34 @@
+;;=============================================================================
+;;  Morde <-> Salesforce Connector : "Morde SAP ID" field
+;;-----------------------------------------------------------------------------
+;;  Declares ONE global User Defined Field (UDF) named MordeSAPID. Per Tally's
+;;  developer reference a UDF declared under [System: UDF] "automatically
+;;  attaches with the current object", so this single line lets the connector
+;;  STORE and READ the SAP Id on Ledgers, Stock Items and Vouchers over XML.
+;;
+;;  Index 20001 is inside Tally's 20001-65536 third-party range, so it can never
+;;  collide with Tally's own fields.
+;;
+;;  HOW THE CONNECTOR USES IT (verified working):
+;;    * WRITE : plain tag inside the master, e.g.
+;;                <LEDGER NAME="..." ACTION="Alter"><MORDESAPID>SAP123</MORDESAPID></LEDGER>
+;;              (the <UDF:...LIST DESC=`..`> namespaced form is ONLY for
+;;               undeclared/dynamic UDFs and does NOT persist a declared one.)
+;;    * READ  : via a computed collection method $MordeSAPID
+;;                <COMPUTE>SapId : $MordeSAPID</COMPUTE>
+;;              (a bare <FETCH>MordeSAPID</FETCH> silently drops it.)
+;;
+;;  SAFETY: additive only. It touches no existing screen, report, form or part;
+;;  nothing existing can break. Removing this file later just stops Tally
+;;  reading/writing the slot; any stored values stay in the data.
+;;
+;;  An on-screen box to type this by hand is optional and intentionally omitted
+;;  (ledger-screen part names vary by TallyPrime build; the connector never
+;;  needs the box). Ask us to add it for your exact build if you want it.
+;;
+;;  LOAD: F1 > TDL & Add-On > Manage Local TDLs > add this file's full path >
+;;        Accept. Should show loaded with no error on any TallyPrime version.
+;;=============================================================================
+
+[System: UDF]
+    MordeSAPID : String : 20001
