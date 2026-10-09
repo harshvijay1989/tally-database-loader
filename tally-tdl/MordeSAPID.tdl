@@ -1,47 +1,50 @@
 ;;=============================================================================
-;;  Morde <-> Salesforce Connector : "SAP ID" custom field (UDF)
+;;  Morde <-> Salesforce Connector : "SAP ID" field (per-object UDF)
 ;;-----------------------------------------------------------------------------
-;;  PURPOSE
-;;    Adds ONE dedicated storage field -- MordeSAPID -- that the connector
-;;    reads / writes on Ledgers (Accounts), Stock Items (Products) and Vouchers
-;;    to cross-reference each Tally record with its Salesforce SAP Id.
-;;    A single UDF definition is usable on every object type; you do not need a
-;;    separate field per object.
+;;  Adds a "Morde SAP ID" field and ATTACHES it (Storage: MordeSAPID) to the
+;;  Ledger, Stock Item and Voucher masters, so the value genuinely persists and
+;;  can be read back / imported. (A bare [System: UDF] declaration alone did not
+;;  persist on this build -- the Storage attachment below is the fix.)
 ;;
-;;  SAFETY  (important)
-;;    This file is ADDITIVE ONLY. It merely DECLARES a new user-defined field in
-;;    the [System: UDF] repository. It does NOT modify, remove, reorder or
-;;    override any existing Tally master, voucher, screen, report, menu, feature
-;;    or behaviour. Loading it cannot change or corrupt existing data or
-;;    vouchers, and removing it later is equally harmless (the stored values are
-;;    simply no longer surfaced). It is safe to load on any company.
+;;  SAFETY: additive only. Each master form gets ONE extra part/line/field via
+;;  "Add:" -- nothing existing is removed, reordered or overridden. Removing this
+;;  file later just hides the field; stored values stay in the data.
 ;;
-;;  HOW TO LOAD  (one time per Tally installation, at onboarding)
-;;    TallyPrime: Gateway of Tally > F1 (Help) > "TDL & Add-On" > F4 (Manage
-;;    Local TDLs) > set "Load TDLs on Startup" = Yes > add the full path to this
-;;    file (e.g. C:\MordeConnector\MordeSAPID.tdl) > Ctrl+A to accept > restart
-;;    TallyPrime.
-;;      -- or -- add this line under the [Tally] section of tally.ini:
-;;         TDL=C:\MordeConnector\MordeSAPID.tdl
+;;  LOAD: F1 (Help) > TDL & Add-On > Manage Local TDLs > Load on startup = Yes >
+;;        add this file's full path > Ctrl+A > restart TallyPrime.
+;;        Do NOT also keep the earlier declaration-only version loaded (same UDF).
 ;;
-;;  HOW THE CONNECTOR USES IT  (read/write via the XML gateway)
-;;    Inside a <LEDGER> / <STOCKITEM> / <VOUCHER> import message, the value is
-;;    written in the UDF namespace (the import envelope already declares
-;;    xmlns:UDF="TallyUDF"):
-;;
-;;        <LEDGER NAME="Acme Retail" ACTION="Alter">
-;;          <UDF:MordeSAPID.LIST DESC="`MordeSAPID`">
-;;            <UDF:MordeSAPID DESC="`MordeSAPID`" TYPE="String">A0123</UDF:MordeSAPID>
-;;          </UDF:MordeSAPID.LIST>
-;;        </LEDGER>
-;;
-;;    and read back by FETCHing the same field name (MordeSAPID) in a Collection
-;;    export, or from the object's exported XML.
-;;
-;;  NOTE
-;;    Number 20001 is in the user range. Change it ONLY if another add-on on the
-;;    same Tally reports a conflict on this number.
+;;  If TallyPrime reports an error on a specific Form/Part name (names can vary by
+;;  version), tell us which line and we'll match it to your build.
 ;;=============================================================================
 
 [System: UDF]
     MordeSAPID : String : 20001
+
+;; ---------- shared input field ------------------------------------------------
+[Field: Morde SAP ID Fld]
+    Use      : Name Field
+    Storage  : MordeSAPID
+    Width    : 40
+    Set as   : $MordeSAPID
+
+;; ---------- Ledger (Account) --------------------------------------------------
+[#Form: Ledger]
+    Add : Parts : Morde SAP ID Part
+
+[Part: Morde SAP ID Part]
+    Lines        : Morde SAP ID Line
+    Vertical     : Yes
+
+[Line: Morde SAP ID Line]
+    Fields       : Short Prompt, Morde SAP ID Fld
+    Local        : Field : Short Prompt : Set as : "Morde SAP ID"
+
+;; ---------- Stock Item (Product) ---------------------------------------------
+[#Form: Stock Item]
+    Add : Parts : Morde SAP ID Part
+
+;; ---------- Voucher (Invoice / Purchase / Order / Note) ----------------------
+;; Optional. If a voucher-screen error appears on load, delete this one block.
+[#Form: Voucher]
+    Add : Parts : Morde SAP ID Part
