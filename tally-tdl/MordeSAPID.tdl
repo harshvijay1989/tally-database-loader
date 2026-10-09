@@ -1,0 +1,47 @@
+;;=============================================================================
+;;  Morde <-> Salesforce Connector : "SAP ID" custom field (UDF)
+;;-----------------------------------------------------------------------------
+;;  PURPOSE
+;;    Adds ONE dedicated storage field -- MordeSAPID -- that the connector
+;;    reads / writes on Ledgers (Accounts), Stock Items (Products) and Vouchers
+;;    to cross-reference each Tally record with its Salesforce SAP Id.
+;;    A single UDF definition is usable on every object type; you do not need a
+;;    separate field per object.
+;;
+;;  SAFETY  (important)
+;;    This file is ADDITIVE ONLY. It merely DECLARES a new user-defined field in
+;;    the [System: UDF] repository. It does NOT modify, remove, reorder or
+;;    override any existing Tally master, voucher, screen, report, menu, feature
+;;    or behaviour. Loading it cannot change or corrupt existing data or
+;;    vouchers, and removing it later is equally harmless (the stored values are
+;;    simply no longer surfaced). It is safe to load on any company.
+;;
+;;  HOW TO LOAD  (one time per Tally installation, at onboarding)
+;;    TallyPrime: Gateway of Tally > F1 (Help) > "TDL & Add-On" > F4 (Manage
+;;    Local TDLs) > set "Load TDLs on Startup" = Yes > add the full path to this
+;;    file (e.g. C:\MordeConnector\MordeSAPID.tdl) > Ctrl+A to accept > restart
+;;    TallyPrime.
+;;      -- or -- add this line under the [Tally] section of tally.ini:
+;;         TDL=C:\MordeConnector\MordeSAPID.tdl
+;;
+;;  HOW THE CONNECTOR USES IT  (read/write via the XML gateway)
+;;    Inside a <LEDGER> / <STOCKITEM> / <VOUCHER> import message, the value is
+;;    written in the UDF namespace (the import envelope already declares
+;;    xmlns:UDF="TallyUDF"):
+;;
+;;        <LEDGER NAME="Acme Retail" ACTION="Alter">
+;;          <UDF:MordeSAPID.LIST DESC="`MordeSAPID`">
+;;            <UDF:MordeSAPID DESC="`MordeSAPID`" TYPE="String">A0123</UDF:MordeSAPID>
+;;          </UDF:MordeSAPID.LIST>
+;;        </LEDGER>
+;;
+;;    and read back by FETCHing the same field name (MordeSAPID) in a Collection
+;;    export, or from the object's exported XML.
+;;
+;;  NOTE
+;;    Number 20001 is in the user range. Change it ONLY if another add-on on the
+;;    same Tally reports a conflict on this number.
+;;=============================================================================
+
+[System: UDF]
+    MordeSAPID : String : 20001
