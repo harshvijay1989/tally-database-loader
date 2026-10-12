@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { ensureStockItem } from './tallyMaster.mjs';
+import { ensureStockItem, readStockItemKeys } from './tallyMaster.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
@@ -36,19 +36,15 @@ const toRate = (v) => toNum(String(v || '').split('/')[0]);
  * distributor): a Field_Mapping row Object_Type='StockItem', target 'Product_SAP_Id__c'.
  */
 export async function loadStockItemSapIds(server, port, sapCode, log) {
-    const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
-    const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
-    const sourceField = ((m === null || m === void 0 ? void 0 : m.source) || 'partno').toLowerCase(); // default: Tally Part Number
+    // SAP Id lives in the MordeSAPID UDF (the standard), which only projects via COMPUTE — a plain
+    // FETCH silently drops it. readStockItemKeys reads it correctly. Only SAP-tagged items matter.
     const out = new Map();
     try {
-        const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,${sourceField.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
-        for (const r of rows) {
-            const name = String(r.name || '').trim();
-            const sap = String(r[sourceField] || '').trim();
-            if (name && sap)
-                out.set(name.toLowerCase(), sap);
-        }
-        log(`  stock-item SAP ids: ${out.size} mapped (from '${sourceField}')`);
+        const keys = await readStockItemKeys(server, port, { sapTaggedOnly: true });
+        for (const k of keys)
+            if (k.name && k.sapId)
+                out.set(k.name.toLowerCase(), k.sapId);
+        log(`  stock-item SAP ids: ${out.size} mapped (from MordeSAPID UDF)`);
     }
     catch (e) {
         log(`  stock-item master read failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
@@ -280,19 +276,14 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
     };
 }
 /** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
- *  Mirror of loadStockItemSapIds — same mapping-driven source field (Part Number by default). */
+ *  Reads the MordeSAPID UDF (via COMPUTE) like loadStockItemSapIds. */
 async function loadStockItemBySap(server, port, sapCode, log) {
-    const maps = await loadMappings('StockItem', 'ToSalesforce', sapCode);
-    const m = maps.find(x => x.target === 'Product_SAP_Id__c' && x.source);
-    const src = ((m === null || m === void 0 ? void 0 : m.source) || 'partno').toLowerCase();
     const out = new Map();
     try {
-        const { rows } = await fetchFilteredCollection(server, port, 'StockItem', `NAME,BASEUNITS,${src.toUpperCase()}`, '$AlterID &gt; 0', {}, 60000);
-        for (const r of rows) {
-            const sap = String(r[src] || '').trim();
-            if (r.name && sap)
-                out.set(sap.toLowerCase(), { name: String(r.name).trim(), unit: String(r.baseunits || '').trim() });
-        }
+        const keys = await readStockItemKeys(server, port, { sapTaggedOnly: true });
+        for (const k of keys)
+            if (k.sapId && k.name)
+                out.set(k.sapId.toLowerCase(), { name: k.name, unit: k.unit || '' });
     }
     catch (e) {
         log(`  stock-item reverse map failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);

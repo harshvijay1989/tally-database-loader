@@ -16,7 +16,7 @@ function esc(s: any): string {
 function q(s: string): string { return (s || '').replace(/"/g, ''); } // for inside Tally "..." filter literals
 const num = (xml: string, tag: string) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
 
-export interface MasterKey { name: string; guid: string; sapId: string; parent?: string; alterId: number; }
+export interface MasterKey { name: string; guid: string; sapId: string; parent?: string; alterId: number; unit?: string; }
 export interface MasterWriteResult { ok: boolean; created: number; altered: number; errors: number; message: string; guid?: string; renamedFrom?: string; }
 
 export interface ReadKeyOpts {
@@ -82,6 +82,7 @@ function parseMasterKeys(xml: string, tag: string): MasterKey[] {
             sapId: pick(blk, 'SAPID'),
             parent: pick(blk, 'PARENT'),
             alterId: parseInt(pick(blk, 'ALTERID'), 10) || 0,
+            unit: pick(blk, 'BASEUNITS') || undefined,
         });
     }
     return out;
@@ -208,7 +209,7 @@ export async function readStockItemKeys(server: string, port: number, opts: Read
         + '<TDL><TDLMESSAGE>'
         + '<COLLECTION NAME="MordeItemKeys" ISMODIFY="No" ISINITIALIZE="Yes">'
         + '<TYPE>StockItem</TYPE><FILTER>mordeFlt</FILTER>'
-        + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD>'
+        + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD><NATIVEMETHOD>BaseUnits</NATIVEMETHOD>'
         + '<COMPUTE>SapId : $MordeSAPID</COMPUTE>'
         + '<COMPUTE>TallyGuid : $Guid</COMPUTE>'
         + '</COLLECTION>'

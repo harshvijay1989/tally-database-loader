@@ -72,6 +72,7 @@ function parseMasterKeys(xml, tag) {
             sapId: pick(blk, 'SAPID'),
             parent: pick(blk, 'PARENT'),
             alterId: parseInt(pick(blk, 'ALTERID'), 10) || 0,
+            unit: pick(blk, 'BASEUNITS') || undefined,
         });
     }
     return out;
@@ -204,7 +205,7 @@ export async function readStockItemKeys(server, port, opts = {}) {
         + '<TDL><TDLMESSAGE>'
         + '<COLLECTION NAME="MordeItemKeys" ISMODIFY="No" ISINITIALIZE="Yes">'
         + '<TYPE>StockItem</TYPE><FILTER>mordeFlt</FILTER>'
-        + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD>'
+        + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD><NATIVEMETHOD>BaseUnits</NATIVEMETHOD>'
         + '<COMPUTE>SapId : $MordeSAPID</COMPUTE>'
         + '<COMPUTE>TallyGuid : $Guid</COMPUTE>'
         + '</COLLECTION>'
