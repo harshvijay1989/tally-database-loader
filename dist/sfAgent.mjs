@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { fetchFilteredCollection, describeError } from './tallyLive.mjs';
+import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun } from './sfConfig.mjs';
 export const SPECS = {
@@ -9,6 +9,9 @@ export const SPECS = {
     Purchase: { objectType: 'Purchase', stagingObject: 'Tally_Purchase__c', externalId: 'Tally_Guid__c', voucherTypes: ['Purchase'], lineObject: 'Tally_Purchase_Line__c', lineParentRel: 'Purchase__r' },
     Order: { objectType: 'Order', stagingObject: 'Tally_Order__c', externalId: 'Tally_Guid__c', voucherTypes: ['Sales Order', 'Purchase Order'], lineObject: 'Tally_Order_Line__c', lineParentRel: 'Order__r' },
     Note: { objectType: 'Note', stagingObject: 'Tally_Note__c', externalId: 'Tally_Guid__c', voucherTypes: ['Credit Note', 'Debit Note'], noteType: true, lineObject: 'Tally_Note_Line__c', lineParentRel: 'Note__r' },
+    // Primary purchase order (Morde -> distributor). Dedicated object, kept apart from the
+    // secondary sales-order machinery on Tally_Order__c (which has its own writeback trigger).
+    PurchaseOrder: { objectType: 'PurchaseOrder', stagingObject: 'Tally_Purchase_Order__c', externalId: 'Tally_Guid__c', voucherTypes: ['Purchase Order'], lineObject: 'Tally_Purchase_Order_Line__c', lineParentRel: 'Purchase_Order__r' },
 };
 // ---- Inventory line-item parsing ----
 // Tally returns inventory lines as parallel, '; '-joined values on the parent voucher row
@@ -192,6 +195,10 @@ const TO_TALLY_RULES = {
     DebitNote: { voucherType: 'Debit Note', counterLedgerDefault: 'Purchase', partySign: -1, qtySign: -1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
     // Sales Order: inventory-only order voucher, NO accounting impact (needs Order Processing in Tally).
     Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: 1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
+    // Primary purchase order (Morde -> distributor): a purchase-side order, party = the Morde
+    // supplier ledger. No financial impact (order voucher); just records the commitment so the
+    // later primary-purchase invoice can net against it (order tracking).
+    PurchaseOrder: { voucherType: 'Purchase Order', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts', order: true },
 };
 /** Resolve the accounting rule for a staging object; Note branches on its Credit/Debit type. */
 function ruleFor(objectType, logical) {
@@ -239,6 +246,10 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
             stockItem, unit, qty: qtySign * qty, rate: num(ln.rate),
             amount: -partySign * amt, // opposite side of the party posting
             accountingLedger: String(ln.ledger || counter),
+            // A per-line order number wins; otherwise the voucher-level order reference. Only
+            // meaningful on a consuming voucher (not the order itself) — buildVoucherImportXml
+            // drops it when isOrder.
+            orderNo: ln.orderNo ? String(ln.orderNo) : (logical.orderRef ? String(logical.orderRef) : undefined),
         });
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -301,13 +312,40 @@ async function loadPendingLines(spec, headerIds, sapCode, log) {
     }
     return out;
 }
+/** Best-effort: after a voucher is created, read its Tally GUID back so the staging record carries
+ *  the permanent Tally key (hard SF<->Tally identity, alongside the shared reference). Keyed on the
+ *  number/reference we sent; short timeout, and NEVER throws — a failed lookup just means no GUID. */
+async function lookupVoucherGuid(server, port, spec, v) {
+    const key = v.voucherNumber || v.reference;
+    if (!key)
+        return '';
+    try {
+        const typeFilter = spec.voucherTypes.map(vt => `$VoucherTypeName = ${qstr(vt)}`).join(' OR ');
+        const k = qstr(String(key));
+        const filter = `(${typeFilter}) AND ($VoucherNumber = ${k} OR $Reference = ${k})`;
+        // Wide date range so the voucher is in scope regardless of the company's current period
+        // (a voucher collection otherwise defaults to the current date and misses it).
+        const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeVGuid</ID></HEADER>'
+            + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
+            + '<SVFROMDATE>19000101</SVFROMDATE><SVTODATE>29991231</SVTODATE></STATICVARIABLES>'
+            + '<TDL><TDLMESSAGE><COLLECTION NAME="MordeVGuid" ISMODIFY="No" ISINITIALIZE="Yes">'
+            + '<TYPE>Voucher</TYPE><FILTER>vg</FILTER><FETCH>GUID,VOUCHERNUMBER,REFERENCE</FETCH></COLLECTION>'
+            + `<SYSTEM TYPE="Formula" NAME="vg">${filter}</SYSTEM>`
+            + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+        const resp = await postTallyXml(server, port, xml, 15000);
+        return (resp.match(/<GUID[^>]*>([^<]+)<\/GUID>/i) || [])[1] || '';
+    }
+    catch {
+        return '';
+    }
+}
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally (with their line items), then write status back. */
 export async function syncToTally(spec, acct, server, port, opts = {}) {
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
-    if (!['Invoice', 'Purchase', 'Order', 'Note'].includes(spec.objectType)) {
+    if (!['Invoice', 'Purchase', 'Order', 'Note', 'PurchaseOrder'].includes(spec.objectType)) {
         log(`[agent] SF->Tally not supported for ${spec.objectType} yet`, true);
         return { pending: 0, created: 0, failed: 0, errors: [`no rule for ${spec.objectType}`] };
     }
@@ -352,8 +390,13 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         const pr = await postVoucher(server, port, built, { dryRun: opts.dryRun, log: (m, e) => log('  ' + m, e) });
         if (pr.ok) {
             res.created++;
-            if (!opts.dryRun)
-                await sfUpdate(spec.stagingObject, row.Id, { Sync_Status__c: 'Done', Error__c: '', Tally_Voucher_Number__c: built.voucherNumber || '' }).catch(() => { });
+            if (!opts.dryRun) {
+                const guid = await lookupVoucherGuid(server, port, spec, built);
+                const fields = { Sync_Status__c: 'Done', Error__c: '', Tally_Voucher_Number__c: built.voucherNumber || '' };
+                if (guid)
+                    fields.Tally_Guid__c = guid; // permanent Tally key (best-effort)
+                await sfUpdate(spec.stagingObject, row.Id, fields).catch(() => { });
+            }
         }
         else {
             res.failed++;

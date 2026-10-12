@@ -186,7 +186,7 @@ export async function syncProductsToTally(acct, server, port, opts = {}) {
     const log = opts.log || (() => { });
     const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
     const fallbackUnit = opts.defaultUnit || 'pcs';
-    const rows = await sfQuery(`SELECT Id, Name, SAP_ID__c, Tally_Guid__c, BaseUOM__c ` +
+    const rows = await sfQuery(`SELECT Id, Name, SAP_ID__c, Tally_Guid__c, BaseUOM__c, HSN__c, GST_Percentage__c ` +
         `FROM Tally_Product__c ` +
         `WHERE Account__c = '${esc(acct.id)}' AND SAP_ID__c != null AND Tally_Guid__c = null ` +
         `ORDER BY Name`);
@@ -195,12 +195,14 @@ export async function syncProductsToTally(acct, server, port, opts = {}) {
         const name = r.Name;
         const sapId = r.SAP_ID__c || '';
         const unit = (r.BaseUOM__c || fallbackUnit).trim() || fallbackUnit;
+        const gstRate = (r.GST_Percentage__c != null) ? Number(r.GST_Percentage__c) : undefined;
+        const hsn = r.HSN__c || undefined;
         if (opts.dryRun) {
-            log(`[dry-run] would push stock item '${name}' (sap='${sapId}', unit='${unit}')`);
+            log(`[dry-run] would push stock item '${name}' (sap='${sapId}', unit='${unit}', gst=${gstRate !== null && gstRate !== void 0 ? gstRate : 'n/a'}, hsn=${hsn !== null && hsn !== void 0 ? hsn : 'n/a'})`);
             continue;
         }
         try {
-            const w = await upsertStockItemWithSapId(server, port, name, unit, sapId, { log });
+            const w = await upsertStockItemWithSapId(server, port, name, unit, sapId, { gstRate, hsn, log });
             if (!w.ok) {
                 res.failed++;
                 res.errors.push(`${name}: ${w.message}`);

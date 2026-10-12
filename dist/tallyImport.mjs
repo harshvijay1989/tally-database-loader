@@ -31,6 +31,9 @@ export function buildVoucherImportXml(v, action = 'Create') {
         + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
         // Order vouchers add the line's order due date; accounting allocations stay in both cases.
         + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
+        // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
+        // Tally nets this quantity against that order and tracks the pending/short balance.
+        + (!v.isOrder && i.orderNo ? `<ORDERNO>${esc(i.orderNo)}</ORDERNO>` : '')
         + '<ACCOUNTINGALLOCATIONS.LIST>'
         + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`

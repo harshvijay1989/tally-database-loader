@@ -212,12 +212,36 @@ export async function stockItemNameByGuid(server: string, port: number, guid: st
     return keys[0]?.name || '';
 }
 
+/** Build the GST details block for a stock item from a single total GST rate (e.g. 18).
+ *  CGST and SGST each get half; IGST gets the full rate — matching how Tally stores it, so the
+ *  distributor's own invoices and GST returns auto-calculate correctly. */
+function gstDetailsXml(gstRate: number, hsn?: string): string {
+    const half = (gstRate / 2);
+    const rd = (head: string, rate: number) =>
+        `<RATEDETAILS.LIST><GSTRATEDUTYHEAD>${head}</GSTRATEDUTYHEAD>`
+        + `<GSTRATEVALUATIONTYPE>Based on Value</GSTRATEVALUATIONTYPE>`
+        + `<GSTRATE>${rate}</GSTRATE></RATEDETAILS.LIST>`;
+    return '<GSTAPPLICABLE>&#4; Applicable</GSTAPPLICABLE>'
+        + '<GSTTYPEOFSUPPLY>Goods</GSTTYPEOFSUPPLY>'
+        + '<GSTDETAILS.LIST>'
+        + '<APPLICABLEFROM>20170701</APPLICABLEFROM>'
+        + '<CALCULATIONTYPE>On Value</CALCULATIONTYPE>'
+        + (hsn ? `<HSNCODE>${esc(hsn)}</HSNCODE><HSN>${esc(hsn)}</HSN>` : '')
+        + '<TAXABILITY>Taxable</TAXABILITY>'
+        + '<SRCOFGSTDETAILS>Specify Details Here</SRCOFGSTDETAILS>'
+        + '<STATEWISEDETAILS.LIST><STATENAME>&#4; Any</STATENAME>'
+        + rd('CGST', half) + rd('SGST/UTGST', half) + rd('IGST', gstRate)
+        + '</STATEWISEDETAILS.LIST>'
+        + '</GSTDETAILS.LIST>';
+}
+
 /** Create (if missing) or alter a stock item, writing the Morde SAP Id into the MordeSAPID UDF.
  *  GUID-first identity (same as ledgers): pass knownGuid to address an existing item by GUID and
- *  rename it instead of creating a duplicate. Ensures the base unit exists first. */
+ *  rename it instead of creating a duplicate. Ensures the base unit exists first. Pass gstRate (and
+ *  optionally hsn) to set GST details so Tally can auto-calculate tax on the distributor's sales. */
 export async function upsertStockItemWithSapId(
     server: string, port: number, name: string, baseUnit: string, sapId: string,
-    opts: { knownGuid?: string; stockGroup?: string; log?: (m: string, e?: boolean) => void } = {},
+    opts: { knownGuid?: string; stockGroup?: string; gstRate?: number; hsn?: string; log?: (m: string, e?: boolean) => void } = {},
 ): Promise<MasterWriteResult> {
     const log = opts.log || (() => { });
     const unit = (baseUnit || 'Nos').trim();
@@ -244,10 +268,11 @@ export async function upsertStockItemWithSapId(
     const baseUnitsXml = action === 'Create' ? `<BASEUNITS>${esc(unit)}</BASEUNITS>` : '';
     const parentXml = action === 'Create' && opts.stockGroup ? `<PARENT>${esc(opts.stockGroup)}</PARENT>` : '';
     const sapXml = sapId ? `<MORDESAPID>${esc(sapId)}</MORDESAPID>` : '';
+    const gstXml = (typeof opts.gstRate === 'number' && opts.gstRate >= 0) ? gstDetailsXml(opts.gstRate, opts.hsn) : '';
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<STOCKITEM NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${baseUnitsXml}${sapXml}</STOCKITEM>`
+        + `<STOCKITEM NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${baseUnitsXml}${sapXml}${gstXml}</STOCKITEM>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');

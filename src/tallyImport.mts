@@ -18,6 +18,8 @@ export interface InventoryEntry {
     rate: number;
     amount: number;          // <0 = debit (purchase side)
     accountingLedger: string;// GL ledger the stock value posts to, e.g. 'Purchase'
+    orderNo?: string;        // link to an existing order (its number): nets this line against that
+                             //   order so Tally tracks pending/short. Requires order processing on.
 }
 export interface VoucherInput {
     date: string;            // YYYYMMDD
@@ -62,6 +64,9 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
         // Order vouchers add the line's order due date; accounting allocations stay in both cases.
         + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
+        // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
+        // Tally nets this quantity against that order and tracks the pending/short balance.
+        + (!v.isOrder && i.orderNo ? `<ORDERNO>${esc(i.orderNo)}</ORDERNO>` : '')
         + '<ACCOUNTINGALLOCATIONS.LIST>'
         + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
