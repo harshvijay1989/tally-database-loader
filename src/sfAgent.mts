@@ -1,6 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger, type VoucherInput } from './tallyImport.mjs';
+import { ensureStockItem } from './tallyMaster.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun, type SyncConfig, type AccountRef } from './sfConfig.mjs';
@@ -401,12 +402,28 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
             log(`  ${row.Id}: invalid - ${built}`, true);
             continue;
         }
-        // Master prerequisites: party + counter ledgers must exist (create if missing).
+        // Master prerequisites: every ledger and stock item the voucher references MUST exist in
+        // this distributor's Tally, or the import fails with a cryptic error. So create any that are
+        // missing first (party + accounting/counter ledgers, and each inventory stock item). If a
+        // master genuinely cannot be created, fail the voucher cleanly with a clear reason rather
+        // than posting a doomed one. (The full account/product master sync creates these properly
+        // with SAP Id/GST; this is the per-voucher safety net.)
         const rule = ruleFor(spec.objectType, logical)!;
+        let masterErr = '';
         if (!opts.dryRun) {
-            await ensureLedger(server, port, built.partyLedger!, rule.partyGroup, log);
+            if (built.partyLedger && !(await ensureLedger(server, port, built.partyLedger, rule.partyGroup, log)))
+                masterErr = `party ledger '${built.partyLedger}' is missing and could not be created`;
             const counters = new Set((built.inventoryEntries || []).map(i => i.accountingLedger).concat(built.entries.length > 1 ? [built.entries[1].ledger] : []));
-            for (const c of counters) await ensureLedger(server, port, c, rule.counterGroup, log);
+            for (const c of counters) if (!masterErr && c && !(await ensureLedger(server, port, c, rule.counterGroup, log)))
+                masterErr = `ledger '${c}' is missing and could not be created`;
+            for (const inv of (built.inventoryEntries || [])) if (!masterErr && !(await ensureStockItem(server, port, inv.stockItem, inv.unit, log)))
+                masterErr = `stock item '${inv.stockItem}' is missing and could not be created`;
+        }
+        if (masterErr) {
+            res.failed++; res.errors.push(`${row.Id}: ${masterErr}`);
+            if (!opts.dryRun) await sfUpdate(spec.stagingObject, row.Id, { Sync_Status__c: 'Error', Error__c: masterErr }).catch(() => { });
+            log(`  ${row.Id}: ${masterErr}`, true);
+            continue;
         }
         const pr = await postVoucher(server, port, built, { dryRun: opts.dryRun, log: (m, e) => log('  ' + m, e) });
         if (pr.ok) {

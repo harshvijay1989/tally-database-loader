@@ -179,6 +179,23 @@ export async function ensureUnit(server, port, symbol, log) {
     log === null || log === void 0 ? void 0 : log(`unit '${unit}': ${num(resp, 'CREATED') > 0 ? 'created' : (ok ? 'already present' : 'create failed — ' + lineErr)}`, !ok);
     return ok;
 }
+/** Ensure a stock item exists (create a minimal one — name + base unit — if missing). This is the
+ *  voucher-time safety net so an inventory line never references a non-existent item; the full
+ *  product sync (with SAP Id + GST) is what creates items properly. Returns true if present/created. */
+export async function ensureStockItem(server, port, name, baseUnit, log) {
+    if (!name)
+        return false;
+    try {
+        if ((await readStockItemKeys(server, port, { names: [name] })).length > 0)
+            return true;
+    }
+    catch { /* treat as missing */ }
+    log === null || log === void 0 ? void 0 : log(`stock item '${name}' missing — creating (unit '${baseUnit || 'pcs'}')`);
+    const r = await upsertStockItemWithSapId(server, port, name, baseUnit || 'pcs', '', { log });
+    if (!r.ok)
+        log === null || log === void 0 ? void 0 : log(`failed to create stock item '${name}': ${r.message}`, true);
+    return r.ok;
+}
 /** Read Name + GUID + SAP Id + AlterID for stock items (COMPUTE collection). */
 export async function readStockItemKeys(server, port, opts = {}) {
     const filterFormula = buildKeyFilter(opts);
