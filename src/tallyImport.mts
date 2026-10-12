@@ -60,8 +60,11 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
         + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
         + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
-        + `<ACTUALQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
-        + `<BILLEDQTY>${i.qty.toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
+        // Quantity is always the POSITIVE magnitude; Tally takes direction (inward/outward) from
+        // ISDEEMEDPOSITIVE (Yes = in / purchase, No = out / sale). A signed qty double-flips it and
+        // a sale would wrongly ADD stock.
+        + `<ACTUALQTY>${Math.abs(i.qty).toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
+        + `<BILLEDQTY>${Math.abs(i.qty).toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
         // Order vouchers add the line's order due date; accounting allocations stay in both cases.
         + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
         // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
