@@ -2,7 +2,7 @@ import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
 import { ensureStockItem } from './tallyMaster.mjs';
-import { computeGstEntries, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
+import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun } from './sfConfig.mjs';
@@ -391,7 +391,13 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         rateBySap = await loadProductGstRates(acct.id);
         distState = await loadDistributorState(acct.id);
         partyStates = await loadPartyStates(acct.id);
-        log(`[agent] GST: ${Object.values(gstCfg).filter(Boolean).length} ledger(s) configured, ${rateBySap.size} product rate(s), distributor state '${distState || '?'}'`);
+        log(`[agent] GST: ${Object.values(gstCfg).filter(Boolean).length} ledger(s), ${rateBySap.size} product rate(s), distributor state '${distState || '?'}'`);
+        // Ensure our standard GST ledgers exist and are correctly classified (create if missing).
+        if (!opts.dryRun) {
+            const gErr = await ensureGstLedgers(server, port, gstCfg, (m, e) => log('  ' + m, e));
+            if (gErr)
+                log(`[agent] GST ledger setup: ${gErr}`, true);
+        }
     }
     for (const row of rows) {
         const logical = applyMapping(row, maps);

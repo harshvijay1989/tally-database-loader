@@ -1,5 +1,6 @@
 import { sfQuery } from './sfClient.mjs';
 import { loadMappings } from './sfMapping.mjs';
+import { postTallyXml, buildFetchXmlFiltered, nameFilter, parseCollection } from './tallyLive.mjs';
 
 // Universal GST engine. Nothing here is hardcoded to a company: the tax RATE comes from each
 // distributor's product data, INTRA vs INTER-state comes from the two parties' state codes, and
@@ -47,6 +48,69 @@ export function computeGstEntries(lines: GstLine[], opts: { intra: boolean; isPu
     return { entries, totalTax: r2(cgst + sgst + igst) };
 }
 
+// Our own standard, rate-agnostic GST ledgers. Used on every company so names are predictable;
+// the connector creates them (correctly classified) if absent. A distributor can override any of
+// these via Field_Mapping__c (Object_Type='GST') to point at their own existing ledgers instead.
+export const DEFAULT_GST_LEDGERS: GstLedgerConfig = {
+    outputCgst: 'Output CGST', outputSgst: 'Output SGST', outputIgst: 'Output IGST',
+    inputCgst: 'Input CGST', inputSgst: 'Input SGST', inputIgst: 'Input IGST',
+};
+// The GST tax type (duty head) each config slot must be classified as.
+const SUBTAX: Record<keyof GstLedgerConfig, string> = {
+    outputCgst: 'CGST', outputSgst: 'SGST/UTGST', outputIgst: 'IGST',
+    inputCgst: 'CGST', inputSgst: 'SGST/UTGST', inputIgst: 'IGST',
+};
+
+function escXml(s: string): string { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+/** Ensure one GST ledger exists and is correctly classified (Duties & Taxes / GST / <subTaxType>).
+ *  An already-existing ledger is trusted (the accountant configured it). A newly created one is
+ *  read back and verified — if it is NOT classified as GST/<subTaxType>, we return false rather
+ *  than risk posting tax into a mis-classified ledger (which would break GST returns). */
+async function ensureGstLedger(server: string, port: number, name: string, subTaxType: string,
+    log?: (m: string, e?: boolean) => void): Promise<boolean> {
+    try {
+        const { rows } = parseCollection(await postTallyXml(server, port, buildFetchXmlFiltered('ledger', 'NAME', nameFilter([name]), {}), 15000), 'ledger');
+        if (rows.some(r => (r.name || '').toLowerCase() === name.toLowerCase())) return true;
+    } catch { /* treat as missing */ }
+    const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<REQUESTDATA><TALLYMESSAGE>'
+        + `<LEDGER NAME="${escXml(name)}" ACTION="Create"><NAME.LIST><NAME>${escXml(name)}</NAME></NAME.LIST>`
+        + '<PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>GST</TAXTYPE>'
+        + `<SUBTAXTYPE>${escXml(subTaxType)}</SUBTAXTYPE></LEDGER>`
+        + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
+    const r = await postTallyXml(server, port, xml, 20000);
+    const created = /<CREATED>(\d+)/.exec(r)?.[1]; const errs = /<ERRORS>(\d+)/.exec(r)?.[1];
+    if (created !== '1' || (errs && errs !== '0')) { log?.(`GST ledger '${name}' create failed`, true); return false; }
+    // verify classification
+    try {
+        const rx = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>GL</ID></HEADER>'
+            + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE>'
+            + '<COLLECTION NAME="GL" ISMODIFY="No" ISINITIALIZE="Yes"><TYPE>Ledger</TYPE><FILTER>f</FILTER><FETCH>Name,TaxType,SubTaxType</FETCH></COLLECTION>'
+            + `<SYSTEM TYPE="Formula" NAME="f">$Name = "${name.replace(/"/g, '')}"</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>`;
+        const rr = await postTallyXml(server, port, rx, 15000);
+        const tt = (rr.match(/<TAXTYPE[^>]*>([^<]*)/i) || [])[1]?.trim() || '';
+        const st = (rr.match(/<SUBTAXTYPE[^>]*>([^<]*)/i) || [])[1]?.trim() || '';
+        const ok = /gst/i.test(tt) && st.toLowerCase() === subTaxType.toLowerCase();
+        log?.(`GST ledger '${name}' created (TaxType=${tt}, SubTaxType=${st})${ok ? '' : ' — NOT correctly classified!'}`, !ok);
+        return ok;
+    } catch { log?.(`GST ledger '${name}' created but could not verify classification`, true); return false; }
+}
+
+/** Ensure all configured GST ledgers exist and are correctly classified. Returns '' on success,
+ *  or an error message naming the first ledger that could not be ensured. */
+export async function ensureGstLedgers(server: string, port: number, cfg: GstLedgerConfig,
+    log?: (m: string, e?: boolean) => void): Promise<string> {
+    for (const k of Object.keys(cfg) as (keyof GstLedgerConfig)[]) {
+        const name = cfg[k];
+        if (!name) continue;
+        if (!(await ensureGstLedger(server, port, name, SUBTAX[k], log)))
+            return `GST ledger '${name}' is missing and could not be created/classified`;
+    }
+    return '';
+}
+
 /** Load this distributor's GST ledger names from Field_Mapping__c (Object_Type='GST'): each row's
  *  Target_Field__c is OutputCGST/OutputSGST/OutputIGST/InputCGST/InputSGST/InputIGST and its
  *  Constant_Value__c is that company's ledger name. Scoped per distributor like other mappings. */
@@ -56,8 +120,8 @@ export async function loadGstConfig(sapCode: string): Promise<GstLedgerConfig> {
         OutputCGST: 'outputCgst', OutputSGST: 'outputSgst', OutputIGST: 'outputIgst',
         InputCGST: 'inputCgst', InputSGST: 'inputSgst', InputIGST: 'inputIgst',
     };
-    const cfg: GstLedgerConfig = {};
-    for (const m of maps) { const k = key[m.target]; if (k && m.constant) (cfg as any)[k] = String(m.constant); }
+    const cfg: GstLedgerConfig = { ...DEFAULT_GST_LEDGERS }; // our standard ledgers by default
+    for (const m of maps) { const k = key[m.target]; if (k && m.constant) (cfg as any)[k] = String(m.constant); } // per-distributor override
     return cfg;
 }
 
