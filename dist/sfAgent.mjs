@@ -2,6 +2,7 @@ import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
 import { ensureStockItem } from './tallyMaster.mjs';
+import { computeGstEntries, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun } from './sfConfig.mjs';
@@ -207,13 +208,7 @@ function ruleFor(objectType, logical) {
         return String(logical.noteType || '').toLowerCase().includes('debit') ? TO_TALLY_RULES.DebitNote : TO_TALLY_RULES.CreditNote;
     return TO_TALLY_RULES[objectType];
 }
-/**
- * Build a balanced VoucherInput from mapped header fields + line items, or return an error.
- * Line stock items are resolved to the distributor's Tally item name via SAP Id (itemBySap),
- * falling back to the line's own stock item name. When lines exist the party amount is derived
- * from the line total, so the voucher always balances.
- */
-export function assembleVoucher(objectType, logical, lines, itemBySap) {
+export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
     const rule = ruleFor(objectType, logical);
     if (!rule)
         return `no ToTally rule for ${objectType} (SF->Tally not supported for this type yet)`;
@@ -232,6 +227,7 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
     const qtySign = isPurchaseSide ? 1 : -1;
     const counter = String(logical.counterLedger || (isPurchaseSide ? 'Purchase' : 'Sales'));
     const inventoryEntries = [];
+    const gstLines = [];
     let lineTotal = 0;
     for (const ln of lines) {
         const sap = String(ln.productSapId || '').toLowerCase();
@@ -243,6 +239,8 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
         const amt = Math.abs(num(ln.amount));
         const unit = String(ln.unit || (resolved ? resolved.unit : '') || '');
         lineTotal += amt;
+        if (gst)
+            gstLines.push({ base: amt, rate: gst.rateBySap.get(sap) || 0 });
         inventoryEntries.push({
             stockItem, unit, qty: qtySign * qty, rate: num(ln.rate),
             amount: -partySign * amt, // opposite side of the party posting
@@ -256,8 +254,20 @@ export function assembleVoucher(objectType, logical, lines, itemBySap) {
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
     if (!total)
         return 'missing/zero amount';
-    const partyAmt = partySign * total;
-    const entries = [{ ledger: party, amount: partyAmt }];
+    // GST: compute tax on the goods lines and post it into this company's GST ledgers (Output for a
+    // sale, Input for a purchase). Orders carry no accounting, so no tax. Tally does NOT auto-calc on
+    // XML import, so we add the amounts; the party balance rises by the tax.
+    let taxEntries = [];
+    let totalTax = 0;
+    if (gst && !rule.order && inventoryEntries.length) {
+        const g = computeGstEntries(gstLines, { intra: gst.intra, isPurchase: isPurchaseSide, cfg: gst.cfg });
+        if (g.error)
+            return `GST: ${g.error}`;
+        taxEntries = g.entries;
+        totalTax = g.totalTax;
+    }
+    const partyAmt = partySign * (total + totalTax);
+    const entries = [{ ledger: party, amount: partyAmt }, ...taxEntries];
     if (!lines.length)
         entries.push({ ledger: counter, amount: -partyAmt }); // no inventory -> plain 2-line accounting voucher
     return {
@@ -369,9 +379,29 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
     // Load line items for these headers (grouped by parent) + the reverse product map.
     const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapCode, log);
     const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapCode, log) : new Map();
+    // GST context (per distributor): ledger names + product rates + state codes for intra/inter.
+    // Only invoices/purchases/notes carry tax; orders have no accounting side.
+    const taxable = ['Invoice', 'Purchase', 'Note'].includes(spec.objectType);
+    let gstCfg = {};
+    let rateBySap = new Map();
+    let distState = '';
+    let partyStates = new Map();
+    if (taxable) {
+        gstCfg = await loadGstConfig(acct.sapCode);
+        rateBySap = await loadProductGstRates(acct.id);
+        distState = await loadDistributorState(acct.id);
+        partyStates = await loadPartyStates(acct.id);
+        log(`[agent] GST: ${Object.values(gstCfg).filter(Boolean).length} ledger(s) configured, ${rateBySap.size} product rate(s), distributor state '${distState || '?'}'`);
+    }
     for (const row of rows) {
         const logical = applyMapping(row, maps);
-        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap);
+        let gstCtx;
+        if (taxable) {
+            const partySt = partyStates.get(String(logical.party || '').trim().toLowerCase()) || '';
+            const intra = !distState || !partySt || distState === partySt; // default to intra when a state is unknown
+            gstCtx = { rateBySap, intra, cfg: gstCfg };
+        }
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx);
         if (typeof built === 'string') {
             res.failed++;
             res.errors.push(`${row.Id}: ${built}`);
@@ -391,7 +421,15 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         if (!opts.dryRun) {
             if (built.partyLedger && !(await ensureLedger(server, port, built.partyLedger, rule.partyGroup, log)))
                 masterErr = `party ledger '${built.partyLedger}' is missing and could not be created`;
-            const counters = new Set((built.inventoryEntries || []).map(i => i.accountingLedger).concat(built.entries.length > 1 ? [built.entries[1].ledger] : []));
+            // Auto-create only the counter/accounting ledgers (Sales/Purchase) — NOT the GST tax
+            // ledgers. GST ledgers are accountant-configured (correct tax classification); creating
+            // one bare would corrupt GST returns. If a configured GST ledger is missing, let the
+            // import fail loudly instead.
+            const counters = new Set();
+            (built.inventoryEntries || []).forEach(i => { if (i.accountingLedger)
+                counters.add(i.accountingLedger); });
+            if (!built.inventoryEntries && built.entries[1])
+                counters.add(built.entries[1].ledger); // plain 2-line voucher's counter
             for (const c of counters)
                 if (!masterErr && c && !(await ensureLedger(server, port, c, rule.counterGroup, log)))
                     masterErr = `ledger '${c}' is missing and could not be created`;
