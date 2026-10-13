@@ -150,20 +150,36 @@ export async function loadProductGstRates(distAccountId) {
             out.set(String(r.SAP_ID__c).toLowerCase(), Number(r.GST_Percentage__c) || 0);
     return out;
 }
-/** The distributor's own state code (for intra/inter determination). */
-export async function loadDistributorState(distAccountId) {
-    const rows = await sfQuery(`SELECT BillingStateCode, BillingState FROM Account WHERE Id = '${distAccountId.replace(/'/g, "\\'")}' LIMIT 1`);
-    const a = rows[0] || {};
-    return String(a.BillingStateCode || a.BillingState || '').trim().toLowerCase();
+/** First 2 digits of an Indian GSTIN are the GST state code (e.g. 27 = Maharashtra).
+ *  Both sides of the intra/inter test are derived this way so they compare like-for-like;
+ *  anything without a parseable GSTIN returns '' and the caller defaults to intra. */
+export function stateFromGstin(gstin) {
+    const g = String(gstin || '').trim();
+    return /^[0-9]{2}/.test(g) ? g.slice(0, 2) : '';
 }
-/** Party ledger name -> state code, for this distributor's Tally_Account__c rows (to decide intra/inter). */
+/** The distributor's own state code (for intra/inter determination), from its GSTIN. */
+export async function loadDistributorState(distAccountId) {
+    try {
+        const rows = await sfQuery(`SELECT GST__c FROM Account WHERE Id = '${distAccountId.replace(/'/g, "\\'")}' LIMIT 1`);
+        return stateFromGstin(rows[0] && rows[0].GST__c);
+    }
+    catch {
+        return '';
+    } // no GSTIN field/value -> unknown -> caller defaults to intra
+}
+/** Party ledger name -> GST state code, from this distributor's Tally_Account__c GSTINs (to decide intra/inter). */
 export async function loadPartyStates(distAccountId) {
     const out = new Map();
-    const rows = await sfQuery(`SELECT Name, BillingAddress__StateCode__s FROM Tally_Account__c ` +
-        `WHERE Distributor__c = '${distAccountId.replace(/'/g, "\\'")}' AND BillingAddress__StateCode__s != null`);
-    for (const r of rows)
-        if (r.Name)
-            out.set(String(r.Name).trim().toLowerCase(), String(r.BillingAddress__StateCode__s || '').trim().toLowerCase());
+    try {
+        const rows = await sfQuery(`SELECT Name, GSTIN__c FROM Tally_Account__c ` +
+            `WHERE Distributor__c = '${distAccountId.replace(/'/g, "\\'")}' AND GSTIN__c != null`);
+        for (const r of rows) {
+            const st = stateFromGstin(r.GSTIN__c);
+            if (r.Name && st)
+                out.set(String(r.Name).trim().toLowerCase(), st);
+        }
+    }
+    catch { /* no GSTIN field/value -> empty -> caller defaults to intra */ }
     return out;
 }
 //# sourceMappingURL=gst.mjs.map
