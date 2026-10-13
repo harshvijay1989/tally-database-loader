@@ -1149,6 +1149,11 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Tally_Account__c.BillingAddress__c</field>
+        <readable>true</readable>
+        <editable>false</editable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Tally_Account__c.PAN__c</field>
         <readable>true</readable>
         <editable>true</editable>
@@ -1219,6 +1224,14 @@
     </tabSettings>
     <tabSettings>
         <tab>Tally_Purchase_Line__c</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+    <tabSettings>
+        <tab>Tally_Purchase_Order__c</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+    <tabSettings>
+        <tab>Tally_Purchase_Order_Line__c</tab>
         <visibility>Visible</visibility>
     </tabSettings>
 </PermissionSet>

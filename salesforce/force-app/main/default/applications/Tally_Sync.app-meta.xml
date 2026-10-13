@@ -12,6 +12,8 @@
     <tabs>Tally_Invoice_Line__c</tabs>
     <tabs>Tally_Purchase__c</tabs>
     <tabs>Tally_Purchase_Line__c</tabs>
+    <tabs>Tally_Purchase_Order__c</tabs>
+    <tabs>Tally_Purchase_Order_Line__c</tabs>
     <tabs>Tally_Order__c</tabs>
     <tabs>Tally_Order_Line__c</tabs>
     <tabs>Tally_Note__c</tabs>
