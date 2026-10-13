@@ -21,8 +21,14 @@ export interface GstEntry { ledger: string; amount: number; } // signed: <0 debi
 export interface GstResult { entries: GstEntry[]; totalTax: number; error?: string; }
 
 /** Compute the GST ledger postings for a set of line bases + rates. Pure + deterministic.
- *  isPurchase → Input GST (debit); sale → Output GST (credit). intra → CGST+SGST; inter → IGST. */
-export function computeGstEntries(lines: GstLine[], opts: { intra: boolean; isPurchase: boolean; cfg: GstLedgerConfig }): GstResult {
+ *  isPurchase selects the LEDGER SET only (true → Input GST, false → Output GST). intra →
+ *  CGST+SGST; inter → IGST. The posting SIGN is independent of the ledger set: the tax always sits
+ *  on the opposite side of the party ledger, so the caller passes `sign` (= -partySign). This
+ *  matters for Credit/Debit Notes, where the document/tax side (ledger) and the accounting side
+ *  (sign) differ: a Credit Note uses Output ledgers but debits them (reverses output liability),
+ *  a Debit Note uses Input ledgers but credits them (reverses ITC). When `sign` is omitted the old
+ *  behaviour is kept (purchase = debit <0, sale = credit >0) for any other caller. */
+export function computeGstEntries(lines: GstLine[], opts: { intra: boolean; isPurchase: boolean; cfg: GstLedgerConfig; sign?: 1 | -1 }): GstResult {
     let cgst = 0, sgst = 0, igst = 0;
     for (const ln of lines) {
         const rate = Number(ln.rate) || 0;
@@ -33,7 +39,7 @@ export function computeGstEntries(lines: GstLine[], opts: { intra: boolean; isPu
         else { igst += tax; }
     }
     cgst = r2(cgst); sgst = r2(sgst); igst = r2(igst);
-    const sign = opts.isPurchase ? -1 : 1; // purchase tax = debit (<0); sales tax = credit (>0)
+    const sign = opts.sign !== undefined ? opts.sign : (opts.isPurchase ? -1 : 1); // tax sits opposite the party ledger; fallback: purchase=debit(<0), sale=credit(>0)
     const out = opts.isPurchase
         ? { cgst: opts.cfg.inputCgst, sgst: opts.cfg.inputSgst, igst: opts.cfg.inputIgst }
         : { cgst: opts.cfg.outputCgst, sgst: opts.cfg.outputSgst, igst: opts.cfg.outputIgst };

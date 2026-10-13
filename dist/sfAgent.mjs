@@ -267,7 +267,9 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
     let taxEntries = [];
     let totalTax = 0;
     if (gst && !rule.order && inventoryEntries.length) {
-        const g = computeGstEntries(gstLines, { intra: gst.intra, isPurchase: docIsPurchase, cfg: gst.cfg });
+        // Ledger set follows the document/tax side (docIsPurchase); the posting sign follows the
+        // accounting side (-partySign) so the tax sits opposite the party, same side as inventory.
+        const g = computeGstEntries(gstLines, { intra: gst.intra, isPurchase: docIsPurchase, sign: (-partySign), cfg: gst.cfg });
         if (g.error)
             return `GST: ${g.error}`;
         taxEntries = g.entries;
