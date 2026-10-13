@@ -1,5 +1,6 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId } from './tallyMaster.mjs';
+import { resolveStateCode } from './stateCodes.mjs';
 const DEFAULT_DEBTOR_GROUP = 'Sundry Debtors';
 function esc(s) { return (s || '').replace(/'/g, "\\'"); }
 /** Best-effort audit row in Trigger_Log__c. Never throws (logging must not break a sync). */
@@ -92,14 +93,27 @@ export async function syncAccountsToSalesforce(acct, server, port, opts = {}) {
         scoped.forEach(k => log(`[dry-run] would upsert Tally_Account__c name='${k.name}' guid=${k.guid} sap='${k.sapId}'`));
         return res;
     }
-    const records = scoped.map(k => ({
-        Tally_Guid__c: k.guid,
-        Name: k.name.slice(0, 80),
-        SAP_ID__c: k.sapId || undefined,
-        Distributor__c: acct.id, // lets the org generate SAP + attach to the right distributor
-        Sync_Status__c: 'From Tally', // this record describes a ledger that came from Tally
-        // Account__c is left for the org's inbound handler to match/create and link.
-    }));
+    const records = scoped.map(k => {
+        const rec = {
+            Tally_Guid__c: k.guid,
+            Name: k.name.slice(0, 80),
+            SAP_ID__c: k.sapId || undefined,
+            GSTIN__c: k.gstin || undefined, // copy the party's GSTIN up when Tally has it
+            Distributor__c: acct.id, // lets the org generate SAP + attach to the right distributor
+            Sync_Status__c: 'From Tally', // this record describes a ledger that came from Tally
+            // Account__c is left for the org's inbound handler to match/create and link.
+        };
+        // Resolve the party's GST state (name first, GSTIN prefix fallback). A StateCode on a
+        // State/Country picklist REQUIRES the CountryCode in the same write, so set both together.
+        // When unresolvable, set neither — the record then fails the Require_Billing_State
+        // validation rule by design and surfaces in Trigger_Log for a data fix.
+        const code = resolveStateCode(k.state, k.gstin);
+        if (code) {
+            rec.BillingAddress__CountryCode__s = 'IN';
+            rec.BillingAddress__StateCode__s = code;
+        }
+        return rec;
+    });
     try {
         const r = await sfUpsert('Tally_Account__c', 'Tally_Guid__c', records, log);
         res.pulled = r.success;

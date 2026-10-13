@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Require_Billing_State</fullName>
+    <active>true</active>
+    <description>GST needs the party's state to decide intra- vs inter-state tax (CGST+SGST vs IGST). The inbound Tally account pull fills BillingAddress__StateCode__s from the ledger state/GSTIN; this rule rejects any Tally_Account__c that still has no state.</description>
+    <errorConditionFormula>ISBLANK( TEXT( BillingAddress__StateCode__s ) )</errorConditionFormula>
+    <errorDisplayField>BillingAddress__c</errorDisplayField>
+    <errorMessage>A Billing State/Province is required — it determines GST intra/inter-state (CGST+SGST vs IGST).</errorMessage>
+</ValidationRule>

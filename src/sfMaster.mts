@@ -1,6 +1,7 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { AccountRef } from './sfConfig.mjs';
 import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, MasterKey } from './tallyMaster.mjs';
+import { resolveStateCode } from './stateCodes.mjs';
 
 // Account master bridge (Tally side only). Morde's ORG already owns the Salesforce-side
 // orchestration in Apex:
@@ -101,14 +102,24 @@ export async function syncAccountsToSalesforce(acct: AccountRef, server: string,
     res.newWatermark = scoped.reduce((mx, k) => Math.max(mx, k.alterId || 0), opts.sinceAlterId || 0);
     if (!scoped.length) { log('Tally->SF accounts: nothing in scope'); return res; }
     if (opts.dryRun) { scoped.forEach(k => log(`[dry-run] would upsert Tally_Account__c name='${k.name}' guid=${k.guid} sap='${k.sapId}'`)); return res; }
-    const records = scoped.map(k => ({
-        Tally_Guid__c: k.guid,
-        Name: k.name.slice(0, 80),
-        SAP_ID__c: k.sapId || undefined,
-        Distributor__c: acct.id,          // lets the org generate SAP + attach to the right distributor
-        Sync_Status__c: 'From Tally',     // this record describes a ledger that came from Tally
-        // Account__c is left for the org's inbound handler to match/create and link.
-    }));
+    const records = scoped.map(k => {
+        const rec: Record<string, any> = {
+            Tally_Guid__c: k.guid,
+            Name: k.name.slice(0, 80),
+            SAP_ID__c: k.sapId || undefined,
+            GSTIN__c: k.gstin || undefined,  // copy the party's GSTIN up when Tally has it
+            Distributor__c: acct.id,          // lets the org generate SAP + attach to the right distributor
+            Sync_Status__c: 'From Tally',     // this record describes a ledger that came from Tally
+            // Account__c is left for the org's inbound handler to match/create and link.
+        };
+        // Resolve the party's GST state (name first, GSTIN prefix fallback). A StateCode on a
+        // State/Country picklist REQUIRES the CountryCode in the same write, so set both together.
+        // When unresolvable, set neither — the record then fails the Require_Billing_State
+        // validation rule by design and surfaces in Trigger_Log for a data fix.
+        const code = resolveStateCode(k.state, k.gstin);
+        if (code) { rec.BillingAddress__CountryCode__s = 'IN'; rec.BillingAddress__StateCode__s = code; }
+        return rec;
+    });
     try {
         const r = await sfUpsert('Tally_Account__c', 'Tally_Guid__c', records, log);
         res.pulled = r.success;

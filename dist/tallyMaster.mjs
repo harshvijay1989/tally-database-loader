@@ -43,6 +43,8 @@ export async function readLedgerKeys(server, port, opts = {}) {
         + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD>'
         + '<COMPUTE>SapId : $MordeSAPID</COMPUTE>'
         + '<COMPUTE>TallyGuid : $Guid</COMPUTE>'
+        + '<COMPUTE>LedState : $LedStateName</COMPUTE>'
+        + '<COMPUTE>Gstin : $PartyGSTIN</COMPUTE>'
         + '</COLLECTION>'
         + `<SYSTEM TYPE="Formula" NAME="mordeFlt">${filterFormula}</SYSTEM>`
         + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
@@ -73,6 +75,8 @@ function parseMasterKeys(xml, tag) {
             parent: pick(blk, 'PARENT'),
             alterId: parseInt(pick(blk, 'ALTERID'), 10) || 0,
             unit: pick(blk, 'BASEUNITS') || undefined,
+            state: unesc(pick(blk, 'LEDSTATE')) || undefined,
+            gstin: pick(blk, 'GSTIN') || undefined,
         });
     }
     return out;

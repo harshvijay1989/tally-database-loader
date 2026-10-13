@@ -16,7 +16,7 @@ function esc(s: any): string {
 function q(s: string): string { return (s || '').replace(/"/g, ''); } // for inside Tally "..." filter literals
 const num = (xml: string, tag: string) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
 
-export interface MasterKey { name: string; guid: string; sapId: string; parent?: string; alterId: number; unit?: string; }
+export interface MasterKey { name: string; guid: string; sapId: string; parent?: string; alterId: number; unit?: string; state?: string; gstin?: string; }
 export interface MasterWriteResult { ok: boolean; created: number; altered: number; errors: number; message: string; guid?: string; renamedFrom?: string; }
 
 export interface ReadKeyOpts {
@@ -53,6 +53,8 @@ export async function readLedgerKeys(server: string, port: number, opts: ReadKey
         + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD>'
         + '<COMPUTE>SapId : $MordeSAPID</COMPUTE>'
         + '<COMPUTE>TallyGuid : $Guid</COMPUTE>'
+        + '<COMPUTE>LedState : $LedStateName</COMPUTE>'
+        + '<COMPUTE>Gstin : $PartyGSTIN</COMPUTE>'
         + '</COLLECTION>'
         + `<SYSTEM TYPE="Formula" NAME="mordeFlt">${filterFormula}</SYSTEM>`
         + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
@@ -83,6 +85,8 @@ function parseMasterKeys(xml: string, tag: string): MasterKey[] {
             parent: pick(blk, 'PARENT'),
             alterId: parseInt(pick(blk, 'ALTERID'), 10) || 0,
             unit: pick(blk, 'BASEUNITS') || undefined,
+            state: unesc(pick(blk, 'LEDSTATE')) || undefined,
+            gstin: pick(blk, 'GSTIN') || undefined,
         });
     }
     return out;
