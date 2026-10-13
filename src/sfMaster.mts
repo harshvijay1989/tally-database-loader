@@ -172,6 +172,49 @@ export async function backfillSapIdsToTally(acct: AccountRef, server: string, po
     return res;
 }
 
+/** ONE-TIME BACKFILL (Tally -> SF): fill the GST state on legacy Tally_Account__c rows that have no
+ *  BillingAddress__StateCode__s yet. The normal inbound pull is AlterID-watermark-gated, so an
+ *  unchanged legacy ledger is never re-read and its stateless account would keep failing the
+ *  Require_Billing_State validation rule. This reads each stateless row's ledger from Tally by GUID
+ *  (state + GSTIN), resolves the SF state code, and updates the row. Idempotent and re-runnable:
+ *  rows that already have a state are not queried; a row whose ledger has no resolvable state/GSTIN
+ *  (or whose GUID isn't found in Tally) is counted 'unresolvable' and left for a data fix. */
+export async function backfillAccountStates(acct: AccountRef, server: string, port: number,
+    opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<{ scanned: number; filled: number; unresolvable: number; failed: number; errors: string[] }> {
+    const log = opts.log || (() => { });
+    const res = { scanned: 0, filled: 0, unresolvable: 0, failed: 0, errors: [] as string[] };
+    const rows = await sfQuery(
+        `SELECT Id, Name, Tally_Guid__c ` +
+        `FROM Tally_Account__c ` +
+        `WHERE Distributor__c = '${esc(acct.id)}' AND Tally_Guid__c != null AND BillingAddress__StateCode__s = null ` +
+        `ORDER BY Name`);
+    res.scanned = rows.length;
+    if (!rows.length) { log('account-state backfill: no stateless rows to fill'); return res; }
+    // Read current ledger state + GSTIN by GUID, chunked so the OR-ed filter formula stays small.
+    const byGuid = new Map<string, { state?: string; gstin?: string }>();
+    const guids = rows.map(r => r.Tally_Guid__c);
+    for (let i = 0; i < guids.length; i += 150) {
+        const keys = await readLedgerKeys(server, port, { guids: guids.slice(i, i + 150) });
+        for (const k of keys) byGuid.set(k.guid, { state: k.state, gstin: k.gstin });
+    }
+    for (const r of rows) {
+        const led = byGuid.get(r.Tally_Guid__c);
+        const code = led ? resolveStateCode(led.state, led.gstin) : '';
+        if (!code) { res.unresolvable++; log(`  ${r.Name}: no resolvable state (ledger state='${led?.state || ''}' gstin='${led?.gstin || ''}'${led ? '' : ', guid not found in Tally'})`, true); continue; }
+        if (opts.dryRun) { log(`[dry-run] would set state ${code} on '${r.Name}' (state='${led!.state || ''}' gstin='${led!.gstin || ''}')`); res.filled++; continue; }
+        try {
+            await sfUpdate('Tally_Account__c', r.Id, { BillingAddress__CountryCode__s: 'IN', BillingAddress__StateCode__s: code, GSTIN__c: led!.gstin || undefined });
+            res.filled++;
+            await logTrigger('Tally->SF State backfill', 'Success', 'Tally_Account__c', r.Id, `${r.Name} <- ${code}`);
+        } catch (e: any) {
+            res.failed++; res.errors.push(`${r.Name}: ${e.message}`);
+            await logTrigger('Tally->SF State backfill', 'Error', 'Tally_Account__c', r.Id, e.message);
+        }
+    }
+    log(`account-state backfill: scanned=${res.scanned} filled=${res.filled} unresolvable=${res.unresolvable} failed=${res.failed}`);
+    return res;
+}
+
 /** OUTBOUND ONLY (SF -> Tally): products are mastered in Salesforce. The org's
  *  DistProductMappingHandler creates Tally_Product__c rows (SAP_ID__c = <distSAP>-<prodSAP/code>,
  *  Account__c = distributor, GUID blank); we create the Tally STOCK ITEM carrying that SAP Id and

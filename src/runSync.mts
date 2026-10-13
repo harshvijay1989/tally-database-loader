@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import { runCycle, bakedSapCode } from './syncRunner.mjs';
+import { resolveAccount } from './sfConfig.mjs';
+import { backfillAccountStates } from './sfMaster.mjs';
 
 // Headless entry point for one sync cycle. In production the OS scheduler (or the connector's
 // own timer) calls this on the per-mapping frequency; Salesforce still decides what actually
@@ -8,6 +10,11 @@ import { runCycle, bakedSapCode } from './syncRunner.mjs';
 //   node dist/runSync.mjs            # dry-run, honours per-mapping schedule
 //   node dist/runSync.mjs --live     # actually upsert to SF / write to Tally
 //   node dist/runSync.mjs --force    # ignore schedule (run every due-or-not config now)
+//
+//   node dist/runSync.mjs --backfill-account-states            # one-time: dry-run (default)
+//   node dist/runSync.mjs --backfill-account-states --live     # one-time: actually write the states
+//     Fills GST state on legacy stateless Tally_Account__c rows that the AlterID-gated incremental
+//     pull will never re-read. Runs ONLY the backfill (no normal cycle), then exits.
 
 function loadTally(): { server: string; port: number } {
     // Default to 127.0.0.1, not 'localhost': on Windows 'localhost' can resolve to IPv6 ::1
@@ -37,8 +44,21 @@ async function main() {
     const { server, port } = loadTally();
     const log = (m: string, e?: boolean) => console[e ? 'error' : 'log'](m);
 
-    if (!bakedSapCode()) { console.error('No distributor SAP code in connections.json (distributor.sapCode). Aborting.'); process.exit(2); }
+    const sapCode = bakedSapCode();
+    if (!sapCode) { console.error('No distributor SAP code in connections.json (distributor.sapCode). Aborting.'); process.exit(2); }
     console.log(`Tally at ${server}:${port} — ${dryRun ? 'DRY-RUN (no writes)' : 'LIVE'}${force ? ', forced' : ''}${objectType ? `, object=${objectType}` : ''}${direction ? `, direction=${direction}` : ''}`);
+
+    // One-time maintenance: backfill GST state on legacy stateless Tally_Account__c rows. Resolves
+    // the distributor the same way runCycle does (by baked SAP code), runs the backfill, and exits
+    // WITHOUT running a normal cycle. Dry-run by default; --live performs the writes.
+    if (args.has('--backfill-account-states')) {
+        const acct = await resolveAccount(sapCode);
+        if (!acct) { console.error(`No Account in Salesforce with SAP_Company_Code__c = ${sapCode} — cannot backfill`); process.exit(2); }
+        const r = await backfillAccountStates(acct, server, port, { dryRun, log });
+        console.log(`\n=== account-state backfill ===\nscanned=${r.scanned} filled=${r.filled} unresolvable=${r.unresolvable} failed=${r.failed}`);
+        if (r.errors.length) r.errors.slice(0, 10).forEach(e => console.error('  ' + e));
+        process.exit(r.failed ? 1 : 0);
+    }
 
     const reports = await runCycle({ server, port, dryRun, force, objectType, direction, log });
     console.log('\n=== cycle summary ===');
