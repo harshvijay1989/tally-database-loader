@@ -185,18 +185,20 @@ export async function syncToSalesforce(spec, config, acct, server, port, opts = 
     return res;
 }
 const TO_TALLY_RULES = {
-    Invoice: { voucherType: 'Sales', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
-    Purchase: { voucherType: 'Purchase', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
-    // Credit Note: customer credited (reduce receivable), goods come back in.
-    CreditNote: { voucherType: 'Credit Note', counterLedgerDefault: 'Sales', partySign: 1, qtySign: 1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
-    // Debit Note: supplier debited (reduce payable), goods go back out.
-    DebitNote: { voucherType: 'Debit Note', counterLedgerDefault: 'Purchase', partySign: -1, qtySign: -1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
+    Invoice: { voucherType: 'Sales', counterLedgerDefault: 'Sales', partySign: -1, qtySign: -1, taxSide: 'output', partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
+    Purchase: { voucherType: 'Purchase', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, taxSide: 'input', partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
+    // Credit Note: a SALES-side document (Output GST, Sales counter) — customer credited (reduce
+    // receivable, partySign:1), goods come back in (qtySign:1).
+    CreditNote: { voucherType: 'Credit Note', counterLedgerDefault: 'Sales', partySign: 1, qtySign: 1, taxSide: 'output', partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts' },
+    // Debit Note: a PURCHASE-side document (Input GST, Purchase counter) — supplier debited (reduce
+    // payable, partySign:-1), goods go back out (qtySign:-1).
+    DebitNote: { voucherType: 'Debit Note', counterLedgerDefault: 'Purchase', partySign: -1, qtySign: -1, taxSide: 'input', partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts' },
     // Sales Order: inventory-only order voucher, NO accounting impact (needs Order Processing in Tally).
-    Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: 1, partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
+    Order: { voucherType: 'Sales Order', counterLedgerDefault: 'Sales', partySign: -1, qtySign: 1, taxSide: 'output', partyGroup: 'Sundry Debtors', counterGroup: 'Sales Accounts', order: true },
     // Primary purchase order (Morde -> distributor): a purchase-side order, party = the Morde
     // supplier ledger. No financial impact (order voucher); just records the commitment so the
     // later primary-purchase invoice can net against it (order tracking).
-    PurchaseOrder: { voucherType: 'Purchase Order', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts', order: true },
+    PurchaseOrder: { voucherType: 'Purchase Order', counterLedgerDefault: 'Purchase', partySign: 1, qtySign: 1, taxSide: 'input', partyGroup: 'Sundry Creditors', counterGroup: 'Purchase Accounts', order: true },
 };
 /** Resolve the accounting rule for a staging object; Note branches on its Credit/Debit type. */
 function ruleFor(objectType, logical) {
@@ -218,10 +220,19 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
     // Tally->SF read. For orders, the accounting side follows the type (Purchase Order behaves
     // like a purchase, Sales Order like a sale) rather than a hard-coded default.
     const voucherType = String(logical.voucherType || rule.voucherType);
-    const isPurchaseSide = rule.order ? /purchase/i.test(voucherType) : rule.partySign > 0;
-    const partySign = isPurchaseSide ? 1 : -1;
-    const qtySign = isPurchaseSide ? 1 : -1;
-    const counter = String(logical.counterLedger || (isPurchaseSide ? 'Purchase' : 'Sales'));
+    // Two INDEPENDENT notions of "purchase side":
+    //  - signIsPurchase drives the accounting/stock SIGNS (party debit/credit, inward/outward qty).
+    //    For orders it follows the voucher type; otherwise it follows partySign. Preserves the
+    //    correct signs for all 5 types (incl. CreditNote:+/+ and DebitNote:-/-).
+    //  - docIsPurchase drives the DOCUMENT/TAX side (Input vs Output GST + counter default) via
+    //    rule.taxSide. A Credit Note is a sales document (Output) despite partySign:1; a Debit Note
+    //    is a purchase document (Input) despite partySign:-1 — so this must NOT be derived from the
+    //    sign. For orders both booleans equal the voucher-type test.
+    const signIsPurchase = rule.order ? /purchase/i.test(voucherType) : rule.partySign > 0;
+    const docIsPurchase = rule.order ? /purchase/i.test(voucherType) : rule.taxSide === 'input';
+    const partySign = signIsPurchase ? 1 : -1;
+    const qtySign = signIsPurchase ? 1 : -1;
+    const counter = String(logical.counterLedger || (docIsPurchase ? 'Purchase' : 'Sales'));
     const inventoryEntries = [];
     const gstLines = [];
     let lineTotal = 0;
@@ -256,7 +267,7 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
     let taxEntries = [];
     let totalTax = 0;
     if (gst && !rule.order && inventoryEntries.length) {
-        const g = computeGstEntries(gstLines, { intra: gst.intra, isPurchase: isPurchaseSide, cfg: gst.cfg });
+        const g = computeGstEntries(gstLines, { intra: gst.intra, isPurchase: docIsPurchase, cfg: gst.cfg });
         if (g.error)
             return `GST: ${g.error}`;
         taxEntries = g.entries;
@@ -383,6 +394,11 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         distState = await loadDistributorState(acct.id);
         partyStates = await loadPartyStates(acct.id);
         log(`[agent] GST: ${Object.values(gstCfg).filter(Boolean).length} ledger(s), ${rateBySap.size} product rate(s), distributor state '${distState || '?'}'`);
+        // BUG 2: a blank distributor state silently forces intra() = true for EVERY voucher (see the
+        // intra calc below), so inter-state sales can never emit IGST — a silent mis-taxation risk.
+        // Warn once per run; the data fix (set the distributor Account's state) is out of scope here.
+        if (!distState)
+            log(`[agent] GST WARNING: distributor state is blank — every voucher will be taxed INTRA-state (CGST+SGST); inter-state sales will NOT produce IGST. Set the distributor Account's state.`, true);
         // Ensure our standard GST ledgers exist and are correctly classified (create if missing).
         if (!opts.dryRun) {
             const gErr = await ensureGstLedgers(server, port, gstCfg, (m, e) => log('  ' + m, e));
@@ -390,6 +406,9 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                 log(`[agent] GST ledger setup: ${gErr}`, true);
         }
     }
+    // BUG 4: collect goods lines on taxable vouchers whose resolved GST rate is 0 (product missing
+    // GST_Percentage__c) — those post with NO tax and no signal. Aggregated into one warning per run.
+    const zeroRateItems = new Set();
     for (const row of rows) {
         const logical = applyMapping(row, maps);
         let gstCtx;
@@ -397,6 +416,11 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             const partySt = partyStates.get(String(logical.party || '').trim().toLowerCase()) || '';
             const intra = !distState || !partySt || distState === partySt; // default to intra when a state is unknown
             gstCtx = { rateBySap, intra, cfg: gstCfg };
+            for (const ln of (linesByParent.get(row.Id) || [])) {
+                const sap = String(ln.productSapId || '').trim().toLowerCase();
+                if (!(rateBySap.get(sap) || 0))
+                    zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
+            }
         }
         const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx);
         if (typeof built === 'string') {
@@ -460,6 +484,8 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                 await sfUpdate(spec.stagingObject, row.Id, { Sync_Status__c: 'Error', Error__c: pr.message.slice(0, 32000) }).catch(() => { });
         }
     }
+    if (zeroRateItems.size)
+        log(`[agent] GST WARNING: ${zeroRateItems.size} item(s) on taxable vouchers resolved to a 0% GST rate (product missing GST_Percentage__c) and posted with NO tax: ${[...zeroRateItems].join(', ')}. Set GST_Percentage__c on these products.`, true);
     await logToTrigger({
         operation: `SF->Tally ${spec.objectType}`, objectName: spec.stagingObject,
         status: res.failed ? (res.created ? 'Partial' : 'Error') : 'Success',
