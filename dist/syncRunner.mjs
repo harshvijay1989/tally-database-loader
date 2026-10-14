@@ -1,7 +1,10 @@
 import fs from 'node:fs';
-import { loadSyncConfigs, resolveAccount, isDue } from './sfConfig.mjs';
+import { loadSyncConfigs, resolveAccount, isDue, saveWatermark } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally } from './sfAgent.mjs';
+import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally } from './sfMaster.mjs';
 import { logToTrigger } from './sfLog.mjs';
+/** Masters (Account, then Product) run before transactions. Stable priority sort key. */
+function masterFirst(objectType) { return objectType === 'Account' ? 0 : objectType === 'Product' ? 1 : 2; }
 /** The distributor's SAP company code is baked into the per-distributor build. */
 export function bakedSapCode() {
     var _a, _b;
@@ -31,17 +34,38 @@ export async function runCycle(opts) {
     }
     log(`[runner] distributor ${acct.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
     // ---- Tally -> Salesforce (read) ----
-    const toSf = (opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapCode, 'ToSalesforce');
+    const toSf = ((opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapCode, 'ToSalesforce'))
+        .sort((a, b) => masterFirst(a.objectType) - masterFirst(b.objectType)); // masters before transactions (stable)
     for (const cfg of toSf) {
         if (opts.objectType && cfg.objectType !== opts.objectType)
             continue; // schedule one object at a time
+        if (!opts.force && !isDue(cfg, Date.now())) {
+            log(`[runner] ${cfg.objectType} Tally->SF not due yet (every ${cfg.frequencyMinutes}m)`);
+            continue;
+        }
+        // Master object types have no SPEC — handle them directly, then continue.
+        if (cfg.objectType === 'Account') {
+            try {
+                const r = await syncAccountsToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
+                const ok = r.failed === 0 && r.errors.length === 0;
+                if (!opts.dryRun && ok)
+                    await saveWatermark(cfg.id, r.newWatermark).catch(() => { });
+                reports.push({ direction: 'ToSalesforce', objectType: 'Account', ok, detail: `scanned ${r.scanned}, pulled ${r.pulled}, failed ${r.failed}${r.errors[0] ? ` — ${r.errors[0]}` : ''}` });
+            }
+            catch (e) {
+                log(`[runner] Account Tally->SF errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToSalesforce', objectType: 'Account', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            continue;
+        }
+        if (cfg.objectType === 'Product') {
+            log('[runner] Product Tally->SF not supported (no product inbound) — skipping');
+            reports.push({ direction: 'ToSalesforce', objectType: 'Product', ok: true, detail: 'skipped — no Tally->SF product sync' });
+            continue;
+        }
         const spec = SPECS[cfg.objectType];
         if (!spec) {
             log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true);
-            continue;
-        }
-        if (!opts.force && !isDue(cfg, Date.now())) {
-            log(`[runner] ${cfg.objectType} Tally->SF not due yet (every ${cfg.frequencyMinutes}m)`);
             continue;
         }
         try {
@@ -55,17 +79,41 @@ export async function runCycle(opts) {
         }
     }
     // ---- Salesforce -> Tally (write) ----
-    const toTally = (opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapCode, 'ToTally');
+    const toTally = ((opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapCode, 'ToTally'))
+        .sort((a, b) => masterFirst(a.objectType) - masterFirst(b.objectType)); // masters before transactions (stable)
     for (const cfg of toTally) {
         if (opts.objectType && cfg.objectType !== opts.objectType)
             continue; // schedule one object at a time
+        if (!opts.force && !isDue(cfg, Date.now())) {
+            log(`[runner] ${cfg.objectType} SF->Tally not due yet (every ${cfg.frequencyMinutes}m)`);
+            continue;
+        }
+        // Master object types have no SPEC — handle them directly, then continue.
+        if (cfg.objectType === 'Account') {
+            try {
+                const r = await syncAccountsToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Account', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+            }
+            catch (e) {
+                log(`[runner] Account SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Account', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            continue;
+        }
+        if (cfg.objectType === 'Product') {
+            try {
+                const r = await syncProductsToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Product', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+            }
+            catch (e) {
+                log(`[runner] Product SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Product', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            continue;
+        }
         const spec = SPECS[cfg.objectType];
         if (!spec) {
             log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true);
-            continue;
-        }
-        if (!opts.force && !isDue(cfg, Date.now())) {
-            log(`[runner] ${cfg.objectType} SF->Tally not due yet (every ${cfg.frequencyMinutes}m)`);
             continue;
         }
         try {
