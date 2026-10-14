@@ -48,7 +48,13 @@ export async function runCycle(opts) {
             try {
                 const r = await syncAccountsToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
                 const ok = r.failed === 0 && r.errors.length === 0;
-                if (!opts.dryRun && ok)
+                // Advance the watermark on PROGRESS (pulled > 0), not only on a fully-clean run:
+                // legacy stateless ledgers always fail the Require_Billing_State rule, so gating on
+                // r.failed===0 would pin the watermark at 0 and re-pull + re-fail them every cycle.
+                // pulled>0 means the Tally read succeeded and ≥1 account upserted, so advancing is
+                // safe; a fixed ledger's AlterID bumps above the watermark and is re-pulled anyway.
+                // A transient TOTAL failure leaves pulled===0, so the watermark holds and retries.
+                if (!opts.dryRun && r.pulled > 0)
                     await saveWatermark(cfg.id, r.newWatermark).catch(() => { });
                 reports.push({ direction: 'ToSalesforce', objectType: 'Account', ok, detail: `scanned ${r.scanned}, pulled ${r.pulled}, failed ${r.failed}${r.errors[0] ? ` — ${r.errors[0]}` : ''}` });
             }
