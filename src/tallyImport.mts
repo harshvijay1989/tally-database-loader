@@ -20,6 +20,8 @@ export interface InventoryEntry {
     accountingLedger: string;// GL ledger the stock value posts to, e.g. 'Purchase'
     orderNo?: string;        // link to an existing order (its number): nets this line against that
                              //   order so Tally tracks pending/short. Requires order processing on.
+    godown?: string;         // warehouse/location for this line; when set, emits a batch allocation
+    batch?: string;          // batch name (defaults to 'Primary Batch' when a godown is set)
 }
 export interface VoucherInput {
     date: string;            // YYYYMMDD
@@ -70,6 +72,11 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
         // Tally nets this quantity against that order and tracks the pending/short balance.
         + (!v.isOrder && i.orderNo ? `<ORDERNO>${esc(i.orderNo)}</ORDERNO>` : '')
+        // Godown/batch allocation — emitted ONLY when a godown is set, so a line with no godown
+        // produces byte-identical XML to before (single-location distributors and companies without
+        // multiple-godowns enabled are unaffected). One godown per line -> the single allocation
+        // carries the full line amount/qty.
+        + (i.godown ? '<BATCHALLOCATIONS.LIST><GODOWNNAME>' + esc(i.godown) + '</GODOWNNAME><BATCHNAME>' + esc(i.batch || 'Primary Batch') + '</BATCHNAME><AMOUNT>' + i.amount.toFixed(2) + '</AMOUNT><ACTUALQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</ACTUALQTY><BILLEDQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</BILLEDQTY></BATCHALLOCATIONS.LIST>' : '')
         + '<ACCOUNTINGALLOCATIONS.LIST>'
         + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`

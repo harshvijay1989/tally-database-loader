@@ -143,6 +143,93 @@ export async function setLedgerSapId(server, port, name, sapId, log) {
     return ok;
 }
 // ============================================================================
+//  Godown (warehouse/location) — SF <-> Tally, both ways. Identity is GUID + name
+//  only (no SAP UDF). Mirrors the ledger master pattern.
+// ============================================================================
+/** Read Name + GUID + Parent + AlterID for godowns (COMPUTE collection). Pass sinceAlterId for an
+ *  incremental read. Reuses parseMasterKeys (SAP/unit stay empty for godowns). */
+export async function readGodownKeys(server, port, opts = {}) {
+    const filterFormula = buildKeyFilter(opts);
+    const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeGodownKeys</ID></HEADER>'
+        + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>'
+        + '<TDL><TDLMESSAGE>'
+        + '<COLLECTION NAME="MordeGodownKeys" ISMODIFY="No" ISINITIALIZE="Yes">'
+        + '<TYPE>Godown</TYPE><FILTER>mordeFlt</FILTER>'
+        + '<NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>Parent</NATIVEMETHOD><NATIVEMETHOD>AlterId</NATIVEMETHOD>'
+        + '<COMPUTE>TallyGuid : $Guid</COMPUTE>'
+        + '</COLLECTION>'
+        + `<SYSTEM TYPE="Formula" NAME="mordeFlt">${filterFormula}</SYSTEM>`
+        + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+    const resp = await postTallyXml(server, port, xml, 60000);
+    return parseMasterKeys(resp, 'GODOWN');
+}
+/** Resolve a godown's CURRENT name by its permanent GUID (empty if not found). */
+export async function godownNameByGuid(server, port, guid) {
+    var _a;
+    if (!guid)
+        return '';
+    const keys = await readGodownKeys(server, port, { guids: [guid] });
+    return ((_a = keys[0]) === null || _a === void 0 ? void 0 : _a.name) || '';
+}
+/** True if a godown with this exact name already exists. */
+async function godownExists(server, port, name) {
+    if (!name)
+        return false;
+    try {
+        return (await readGodownKeys(server, port, { names: [name] })).some(k => k.name.toLowerCase() === name.toLowerCase());
+    }
+    catch {
+        return false;
+    }
+}
+/** Create (if missing) or alter a godown. GUID-first identity like upsertLedgerWithSapId: when a
+ *  knownGuid is supplied we address the EXISTING godown by its current name and rename it if the
+ *  desired name changed, rather than creating a duplicate. Returns the godown's GUID on success. */
+export async function upsertGodown(server, port, name, parent, opts = {}) {
+    var _a;
+    const log = opts.log || (() => { });
+    let currentName = '';
+    if (opts.knownGuid)
+        currentName = await godownNameByGuid(server, port, opts.knownGuid);
+    let action;
+    let identityName;
+    let renameTo = '';
+    if (currentName) {
+        action = 'Alter';
+        identityName = currentName;
+        if (currentName !== name)
+            renameTo = name;
+    }
+    else if (await godownExists(server, port, name)) {
+        action = 'Alter';
+        identityName = name;
+    }
+    else {
+        action = 'Create';
+        identityName = name;
+    }
+    const nameListXml = action === 'Create'
+        ? `<NAME.LIST><NAME>${esc(name)}</NAME></NAME.LIST>`
+        : (renameTo ? `<NAME.LIST TYPE="String"><NAME>${esc(renameTo)}</NAME></NAME.LIST>` : '');
+    // Parent is only meaningful on create (a godown's "Under"); omit when empty.
+    const parentXml = (action === 'Create' && parent) ? `<PARENT>${esc(parent)}</PARENT>` : '';
+    const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<REQUESTDATA><TALLYMESSAGE>'
+        + `<GODOWN NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}</GODOWN>`
+        + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
+    const resp = await postTallyXml(server, port, xml, 30000);
+    const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');
+    const lineErr = (resp.match(/<LINEERROR>([^<]*)<\/LINEERROR>/i) || [])[1] || '';
+    const ok = errors === 0 && (created > 0 || altered > 0);
+    log(`godown ${action} '${identityName}'${renameTo ? ` -> rename '${renameTo}'` : ''}: created=${created} altered=${altered} errors=${errors}${lineErr ? ' — ' + lineErr : ''}`, !ok);
+    if (!ok)
+        return { ok, created, altered, errors, message: lineErr || 'no change' };
+    const finalName = renameTo || name;
+    const keys = await readGodownKeys(server, port, { names: [finalName] });
+    return { ok, created, altered, errors, message: 'ok', guid: ((_a = keys[0]) === null || _a === void 0 ? void 0 : _a.guid) || opts.knownGuid, renamedFrom: renameTo ? currentName : undefined };
+}
+// ============================================================================
 //  Stock Item (Product) — SF -> Tally only. Same MordeSAPID UDF + GUID identity
 //  as ledgers, but the master is a StockItem which additionally needs base units.
 // ============================================================================

@@ -61,6 +61,12 @@ function buildLines(spec, row, sapCode, itemSap) {
     const disc = splitMulti(row[`${INV}.discount`]);
     const amt = splitMulti(row[`${INV}.amount`]);
     const ledger = splitMulti(row[`${INV}.accountingallocations.list.ledgername`]);
+    // Godown/batch per line (inbound capture). NOTE: the flattener joins ALL batch-allocation values
+    // across the whole voucher under one path, so these index-align with inventory lines only when
+    // every line has exactly one allocation (the one-godown-per-line model). A mixed voucher (some
+    // lines with no allocation) would misalign; see the report's inbound caveat.
+    const godown = splitMulti(row[`${INV}.batchallocations.list.godownname`]);
+    const batch = splitMulti(row[`${INV}.batchallocations.list.batchname`]);
     return names.map((name, i) => {
         const q = parseQty(qty[i]);
         return {
@@ -71,12 +77,16 @@ function buildLines(spec, row, sapCode, itemSap) {
             Quantity__c: q.qty, Unit__c: q.unit,
             Rate__c: toRate(rate[i]), Discount__c: toNum(disc[i]), Amount__c: toNum(amt[i]),
             Accounting_Ledger__c: ledger[i] || '',
+            Godown__c: godown[i] || undefined, Batch__c: batch[i] || undefined,
             Line_No__c: i + 1, SAP_Company_Code__c: sapCode,
         };
     });
 }
 /** Fields the connector always reads regardless of mapping (idempotency + watermark + traceability). */
 const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE', 'VOUCHERTYPENAME'];
+// Always fetch the per-line godown/batch so inbound vouchers can capture warehouse allocation even
+// when a distributor hasn't mapped these fields (they come back flattened as `${INV}.batchallocations.list.*`).
+const INV_FETCH = ['ALLINVENTORYENTRIES.LIST.BATCHALLOCATIONS.LIST.GODOWNNAME', 'ALLINVENTORYENTRIES.LIST.BATCHALLOCATIONS.LIST.BATCHNAME'];
 /**
  * One incremental Tally->SF pass for a single object type. Reads only vouchers of the
  * spec's voucher type whose $AlterID is past the config watermark (so re-runs are cheap and
@@ -96,7 +106,7 @@ export async function syncToSalesforce(spec, config, acct, server, port, opts = 
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
         return res;
     }
-    const fetchList = [...new Set([...SYSTEM_FETCH, ...maps.filter(m => m.source).map(m => m.source.toUpperCase())])].join(',');
+    const fetchList = [...new Set([...SYSTEM_FETCH, ...INV_FETCH, ...maps.filter(m => m.source).map(m => m.source.toUpperCase())])].join(',');
     // Incremental + type-scoped filter. Operators/quotes MUST be XML-escaped (see alterIdRangeFilter).
     const typeFilter = spec.voucherTypes.map(vt => `$VoucherTypeName = ${qstr(vt)}`).join(' OR ');
     const filter = `(${typeFilter}) AND $AlterID &gt; ${config.lastAlterId}`;
@@ -256,6 +266,10 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
             // meaningful on a consuming voucher (not the order itself) — buildVoucherImportXml
             // drops it when isOrder.
             orderNo: ln.orderNo ? String(ln.orderNo) : (logical.orderRef ? String(logical.orderRef) : undefined),
+            // Per-line warehouse: when a godown is set, buildVoucherImportXml emits a batch
+            // allocation (batch defaults to 'Primary Batch'); no godown -> unchanged XML.
+            godown: ln.godown ? String(ln.godown) : undefined,
+            batch: ln.batch ? String(ln.batch) : undefined,
         });
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -311,14 +325,14 @@ async function loadPendingLines(spec, headerIds, sapCode, log) {
     const parentField = spec.lineParentRel.replace('__r', '__c'); // e.g. 'Invoice__r' -> 'Invoice__c'
     const ids = headerIds.map(i => `'${i}'`).join(',');
     try {
-        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c ` +
+        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c, Godown__c, Batch__c ` +
             `FROM ${spec.lineObject} WHERE ${parentField} IN (${ids}) ORDER BY Line_No__c NULLS LAST`);
         for (const r of rows) {
             const pid = r[parentField];
             if (!pid)
                 continue;
             const arr = out.get(pid) || [];
-            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c });
+            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c, godown: r.Godown__c, batch: r.Batch__c });
             out.set(pid, arr);
         }
     }

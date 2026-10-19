@@ -1,5 +1,5 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
-import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId } from './tallyMaster.mjs';
+import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys } from './tallyMaster.mjs';
 import { resolveStateCode } from './stateCodes.mjs';
 const DEFAULT_DEBTOR_GROUP = 'Sundry Debtors';
 function esc(s) { return (s || '').replace(/'/g, "\\'"); }
@@ -66,6 +66,90 @@ export async function syncAccountsToTally(acct, server, port, opts = {}) {
         }
     }
     log(`SF->Tally accounts: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
+    return res;
+}
+/** OUTBOUND (SF -> Tally) GODOWN master: push rows tagged Sync_Status__c='To Tally' to Tally as
+ *  godowns, then copy the real Tally GUID back. GUID-first identity (via upsertGodown) avoids
+ *  duplicates on rename. Godowns have no SAP Id — identity is GUID + name only. */
+export async function syncGodownsToTally(acct, server, port, opts = {}) {
+    const log = opts.log || (() => { });
+    const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
+    const rows = await sfQuery(`SELECT Id, Name, Tally_Guid__c, Parent__c ` +
+        `FROM Tally_Godown__c ` +
+        `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
+        `ORDER BY Name`);
+    res.scanned = rows.length;
+    for (const r of rows) {
+        const name = r.Name;
+        const parent = r.Parent__c || '';
+        const knownGuid = r.Tally_Guid__c || '';
+        if (opts.dryRun) {
+            log(`[dry-run] would push godown '${name}' (parent='${parent}', guid='${knownGuid}')`);
+            continue;
+        }
+        try {
+            const w = await upsertGodown(server, port, name, parent, { knownGuid: knownGuid || undefined, log });
+            if (!w.ok) {
+                res.failed++;
+                res.errors.push(`${name}: ${w.message}`);
+                await logTrigger('SF->Tally Godown', 'Error', 'Tally_Godown__c', r.Id, w.message);
+                continue;
+            }
+            res.pushed++;
+            if (w.guid && w.guid !== knownGuid) {
+                await sfUpdate('Tally_Godown__c', r.Id, { Tally_Guid__c: w.guid });
+                log(`  godown '${name}' -> GUID ${w.guid} written back to SF`);
+            }
+            await logTrigger('SF->Tally Godown', 'Success', 'Tally_Godown__c', r.Id, `guid=${w.guid || ''}`);
+        }
+        catch (e) {
+            res.failed++;
+            res.errors.push(`${name}: ${e.message}`);
+            await logTrigger('SF->Tally Godown', 'Error', 'Tally_Godown__c', r.Id, e.message);
+        }
+    }
+    log(`SF->Tally godowns: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
+    return res;
+}
+/** INBOUND (Tally -> SF) GODOWN master: read ALL godowns (no SAP filter), incremental by AlterID,
+ *  and upsert Tally_Godown__c by GUID. Mirrors syncAccountsToSalesforce; returns the new watermark. */
+export async function syncGodownsToSalesforce(acct, server, port, opts = {}) {
+    var _a;
+    const log = opts.log || (() => { });
+    const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: opts.sinceAlterId || 0, errors: [] };
+    const keys = await readGodownKeys(server, port, { sinceAlterId: opts.sinceAlterId });
+    const scoped = keys.filter(k => k.name && k.guid);
+    res.scanned = scoped.length;
+    res.newWatermark = scoped.reduce((mx, k) => Math.max(mx, k.alterId || 0), opts.sinceAlterId || 0);
+    if (!scoped.length) {
+        log('Tally->SF godowns: nothing in scope');
+        return res;
+    }
+    if (opts.dryRun) {
+        scoped.forEach(k => log(`[dry-run] would upsert Tally_Godown__c name='${k.name}' guid=${k.guid}`));
+        return res;
+    }
+    const records = scoped.map(k => ({
+        Tally_Guid__c: k.guid,
+        Name: k.name.slice(0, 80),
+        Parent__c: k.parent || undefined,
+        Distributor__c: acct.id,
+        Sync_Status__c: 'From Tally',
+    }));
+    try {
+        const r = await sfUpsert('Tally_Godown__c', 'Tally_Guid__c', records, log);
+        res.pulled = r.success;
+        res.failed = r.failed;
+        if ((_a = r.errors) === null || _a === void 0 ? void 0 : _a.length)
+            res.errors.push(...r.errors);
+        await logTrigger('Tally->SF Godown', res.failed ? 'Partial' : 'Success', 'Tally_Godown__c', acct.id, `pulled=${res.pulled} failed=${res.failed}`);
+    }
+    catch (e) {
+        res.failed = records.length;
+        res.errors.push(e.message);
+        await logTrigger('Tally->SF Godown', 'Error', 'Tally_Godown__c', acct.id, e.message);
+    }
+    log(`Tally->SF godowns: scanned=${res.scanned} pulled=${res.pulled} failed=${res.failed} newWatermark=${res.newWatermark}`);
     return res;
 }
 /** INBOUND (Tally -> SF): read this distributor's in-scope ledgers and upsert Tally_Account__c by

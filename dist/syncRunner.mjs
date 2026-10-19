@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import { loadSyncConfigs, resolveAccount, isDue, saveWatermark } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally } from './sfAgent.mjs';
-import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally } from './sfMaster.mjs';
+import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncGodownsToTally, syncGodownsToSalesforce } from './sfMaster.mjs';
 import { logToTrigger } from './sfLog.mjs';
-/** Masters (Account, then Product) run before transactions. Stable priority sort key. */
-function masterFirst(objectType) { return objectType === 'Account' ? 0 : objectType === 'Product' ? 1 : 2; }
+/** Masters (Account, Godown, then Product) run before transactions. Stable priority sort key. */
+function masterFirst(objectType) { return objectType === 'Account' ? 0 : objectType === 'Godown' ? 1 : objectType === 'Product' ? 2 : 3; }
 /** The distributor's SAP company code is baked into the per-distributor build. */
 export function bakedSapCode() {
     var _a, _b;
@@ -69,6 +69,19 @@ export async function runCycle(opts) {
             reports.push({ direction: 'ToSalesforce', objectType: 'Product', ok: true, detail: 'skipped — no Tally->SF product sync' });
             continue;
         }
+        if (cfg.objectType === 'Godown') {
+            try {
+                const r = await syncGodownsToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
+                if (!opts.dryRun && r.pulled > 0)
+                    await saveWatermark(cfg.id, r.newWatermark).catch(() => { }); // progress-gated, like Account
+                reports.push({ direction: 'ToSalesforce', objectType: 'Godown', ok: r.failed === 0, detail: `scanned ${r.scanned}, pulled ${r.pulled}, failed ${r.failed}` });
+            }
+            catch (e) {
+                log(`[runner] Godown Tally->SF errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToSalesforce', objectType: 'Godown', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            continue;
+        }
         const spec = SPECS[cfg.objectType];
         if (!spec) {
             log(`[runner] no connector spec for ${cfg.objectType} — skipping`, true);
@@ -114,6 +127,17 @@ export async function runCycle(opts) {
             catch (e) {
                 log(`[runner] Product SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
                 reports.push({ direction: 'ToTally', objectType: 'Product', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            continue;
+        }
+        if (cfg.objectType === 'Godown') {
+            try {
+                const r = await syncGodownsToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Godown', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+            }
+            catch (e) {
+                log(`[runner] Godown SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Godown', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
             continue;
         }
