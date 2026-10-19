@@ -229,6 +229,47 @@ export async function upsertGodown(server, port, name, parent, opts = {}) {
     const keys = await readGodownKeys(server, port, { names: [finalName] });
     return { ok, created, altered, errors, message: 'ok', guid: ((_a = keys[0]) === null || _a === void 0 ? void 0 : _a.guid) || opts.knownGuid, renamedFrom: renameTo ? currentName : undefined };
 }
+/** True when the active company has MULTIPLE GODOWNS enabled. Confirmed live: the Company native
+ *  method `$IsMultiGodownOn` returns a Logical "Yes"/"No" (the `$$PrimaryGodown`/`$$IsGodownOn`
+ *  functions returned nothing on this build, so they are NOT used). Returns false on any doubt. */
+async function isMultiGodownOn(server, port) {
+    try {
+        const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeCoGodown</ID></HEADER>'
+            + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>'
+            + '<TDL><TDLMESSAGE>'
+            + '<COLLECTION NAME="MordeCoGodown" ISMODIFY="No" ISINITIALIZE="Yes"><TYPE>Company</TYPE><FILTER>actflt</FILTER>'
+            + '<COMPUTE>MultiGodown : $IsMultiGodownOn</COMPUTE></COLLECTION>'
+            + '<SYSTEM TYPE="Formula" NAME="actflt">$$IsEqual:$Name:##SVCurrentCompany</SYSTEM>'
+            + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+        const resp = await postTallyXml(server, port, xml, 20000);
+        const m = resp.match(/<MULTIGODOWN[^>]*>([^<]*)<\/MULTIGODOWN>/i);
+        return !!m && /^\s*yes\s*$/i.test(m[1]);
+    }
+    catch {
+        return false;
+    }
+}
+/** Resolve the company's PRIMARY godown name to default inventory lines to — but ONLY when the
+ *  company has multiple godowns enabled. Once multi-godown is on, Tally REJECTS an inventory line
+ *  that carries no batch/godown allocation, so every line must name a godown. When multi-godown is
+ *  OFF (single-location company), returns '' so callers emit no allocation (today's behaviour,
+ *  byte-identical XML). Primary is resolved by name: 'Main Location' (Tally's standard default),
+ *  then 'Primary', else the first godown. Resilient: any failure -> '' (safe, unchanged behaviour). */
+export async function resolveDefaultGodown(server, port) {
+    try {
+        if (!(await isMultiGodownOn(server, port)))
+            return '';
+        const godowns = await readGodownKeys(server, port, {});
+        const names = godowns.map(g => g.name).filter(Boolean);
+        if (!names.length)
+            return '';
+        const byName = (want) => names.find(n => n.toLowerCase() === want.toLowerCase());
+        return byName('Main Location') || byName('Primary') || names[0];
+    }
+    catch {
+        return '';
+    }
+}
 // ============================================================================
 //  Stock Item (Product) — SF -> Tally only. Same MordeSAPID UDF + GUID identity
 //  as ledgers, but the master is a StockItem which additionally needs base units.

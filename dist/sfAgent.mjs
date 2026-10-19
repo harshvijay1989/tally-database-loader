@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { ensureStockItem, readStockItemKeys } from './tallyMaster.mjs';
+import { ensureStockItem, readStockItemKeys, resolveDefaultGodown } from './tallyMaster.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
@@ -216,7 +216,7 @@ function ruleFor(objectType, logical) {
         return String(logical.noteType || '').toLowerCase().includes('debit') ? TO_TALLY_RULES.DebitNote : TO_TALLY_RULES.CreditNote;
     return TO_TALLY_RULES[objectType];
 }
-export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
+export function assembleVoucher(objectType, logical, lines, itemBySap, gst, defaultGodown = '') {
     const rule = ruleFor(objectType, logical);
     if (!rule)
         return `no ToTally rule for ${objectType} (SF->Tally not supported for this type yet)`;
@@ -266,9 +266,11 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst) {
             // meaningful on a consuming voucher (not the order itself) — buildVoucherImportXml
             // drops it when isOrder.
             orderNo: ln.orderNo ? String(ln.orderNo) : (logical.orderRef ? String(logical.orderRef) : undefined),
-            // Per-line warehouse: when a godown is set, buildVoucherImportXml emits a batch
-            // allocation (batch defaults to 'Primary Batch'); no godown -> unchanged XML.
-            godown: ln.godown ? String(ln.godown) : undefined,
+            // Per-line warehouse: explicit Godown__c wins; else the company default (set only when
+            // multi-godown is enabled — Tally then REQUIRES an allocation on every line); else ''
+            // (single-location company) -> buildVoucherImportXml emits no allocation (unchanged XML).
+            // Batch defaults to 'Primary Batch' at XML build time when a godown is present.
+            godown: (ln.godown ? String(ln.godown) : (defaultGodown || '')) || undefined,
             batch: ln.batch ? String(ln.batch) : undefined,
         });
     }
@@ -397,6 +399,12 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
     // Load line items for these headers (grouped by parent) + the reverse product map.
     const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapCode, log);
     const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapCode, log) : new Map();
+    // Resolve the company's default godown ONCE per run. Non-empty only when multi-godown is enabled
+    // (Tally then rejects any inventory line with no allocation); '' leaves single-location companies
+    // byte-identical. Only relevant for inventory vouchers (those with line items).
+    const defaultGodown = spec.lineObject ? await resolveDefaultGodown(server, port) : '';
+    if (defaultGodown)
+        log(`[agent] multi-godown company — defaulting un-godowned lines to '${defaultGodown}'`);
     // GST context (per distributor): ledger names + product rates + state codes for intra/inter.
     // Only invoices/purchases/notes carry tax; orders have no accounting side.
     const taxable = ['Invoice', 'Purchase', 'Note'].includes(spec.objectType);
@@ -438,7 +446,7 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                     zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
             }
         }
-        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx);
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, defaultGodown);
         if (typeof built === 'string') {
             res.failed++;
             res.errors.push(`${row.Id}: ${built}`);
