@@ -42,6 +42,11 @@
                     <default>false</default>
                     <label>Product</label>
                 </value>
+                <value>
+                    <fullName>Godown</fullName>
+                    <default>false</default>
+                    <label>Godown</label>
+                </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>
