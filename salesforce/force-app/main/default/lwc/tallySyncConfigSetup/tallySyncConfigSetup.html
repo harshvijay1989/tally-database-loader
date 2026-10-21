@@ -7,15 +7,39 @@
             <p class="slds-text-color_weak slds-var-m-bottom_small">
                 Accounts with a SAP Id. "Sync configured" shows whether they already have Sync Config rows.
             </p>
+
+            <div class="slds-grid slds-gutters slds-wrap slds-var-m-bottom_x-small">
+                <div class="slds-col slds-size_1-of-2">
+                    <lightning-input
+                        type="search"
+                        label="Search distributors"
+                        variant="label-hidden"
+                        placeholder="Search by name or SAP Id"
+                        value={searchTerm}
+                        onchange={handleSearch}>
+                    </lightning-input>
+                </div>
+                <div class="slds-col slds-size_1-of-2">
+                    <lightning-combobox
+                        label="Status"
+                        variant="label-hidden"
+                        value={statusFilter}
+                        options={statusOptions}
+                        onchange={handleStatusFilter}>
+                    </lightning-combobox>
+                </div>
+            </div>
+
             <lightning-datatable
                 key-field="id"
-                data={distributors}
+                data={filteredDistributors}
                 columns={distColumns}
+                selected-rows={visibleSelectedIds}
                 onrowselection={handleRowSelection}>
             </lightning-datatable>
 
             <div class="slds-var-m-top_x-small slds-text-body_small slds-text-color_weak">
-                {selectedCount} selected
+                Showing {shownCount} of {totalCount} distributors &middot; {selectedCount} selected
                 <lightning-button
                     class="slds-var-m-left_small"
                     label="Load existing config"
