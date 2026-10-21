@@ -1,0 +1,16 @@
+Tally Stock Item Field,Salesforce Product Field,Type,Notes
+name,Name,Standard,Stock item name (distributor)
+partno,SAP_ID__c,Text (ExtId),Morde SAP Id - MATCH KEY to Morde catalogue
+guid,Tally_Guid__c,Text (ExtId),Unique key from Tally
+parent,Stock_Group__c / Family,Text,Stock Group (used for Morde-only filtering)
+category,Stock_Category__c,Text,Stock Category (2nd classification)
+baseunits,QuantityUnitOfMeasure,Standard/Text,"e.g. MT, PCS"
+additionalunits,Alternate_Unit__c,Text,
+description,Description,Standard,
+gstapplicable,GST_Applicable__c,Checkbox,
+hsn / hsncode,HSN_Code__c,Text,HSN/SAC
+gst rate (rate details),GST_Rate__c,Percent,Tax rate
+openingbalance,Opening_Qty__c,Number,
+openingrate,Opening_Rate__c,Currency,
+openingvalue,Opening_Value__c,Currency,
+ProductCode (SF),ProductCode,Standard,Could mirror partno / SAP Id

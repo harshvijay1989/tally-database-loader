@@ -1,0 +1,12 @@
+SF Line Object Field,Tally Source (inventory line),Notes
+Stock_Item__c,allinventoryentries.list.stockitemname,Stock item name as in the distributor Tally
+Product_SAP_Id__c,Stock Item master -> Part Number (partno),"Morde SAP Id; read from stock-item master, joined by item name"
+Quantity__c,allinventoryentries.list.actualqty (number part),e.g. 90.00 MT -> 90
+Unit__c,allinventoryentries.list.actualqty (unit part),e.g. 90.00 MT -> MT
+Rate__c,allinventoryentries.list.rate,e.g. 35000.00/MT -> 35000
+Discount__c,allinventoryentries.list.discount,
+Amount__c,allinventoryentries.list.amount,Line amount
+Accounting_Ledger__c,allinventoryentries.list.accountingallocations.list.ledgername,GL ledger the line posts to (e.g. Sales)
+Line_No__c,(row index),Sequence within the voucher
+SAP_Company_Code__c,(distributor code),Stamped from the connector SAP code
+Tally_Line_Key__c,voucher GUID + # + line no,External Id for idempotent upsert

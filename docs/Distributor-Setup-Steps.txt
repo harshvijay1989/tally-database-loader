@@ -1,0 +1,166 @@
+============================================================
+ DISTRIBUTOR SETUP - STEP BY STEP (Tally <-> Salesforce)
+============================================================
+
+Goal: connect one distributor's Tally to Salesforce so customers, products,
+purchases, sales, orders and GST flow both ways automatically.
+
+Four parts:  1) Salesforce   2) Tally   3) Connector   4) Verify
+
+
+BEFORE YOU START - have these ready
+------------------------------------------------------------
+- Salesforce access (and the "Tally Sync Integration" permission set assigned
+  to the connector's user -- see IT NOTES at the bottom).
+- The installer:  TallySalesforceConnector-Setup-2.2.1-qa.exe
+  (or ...-qa-win7.exe for Windows 7/8)
+- The Tally add-on file:  MordeSAPID.tdl  (we provide this)
+- The distributor's Windows PC with Tally + their company loaded.
+
+
+============================================================
+ PART 1 - SALESFORCE
+============================================================
+
+STEP 1 - Create the distributor ACCOUNT  (1 record)
+   - SAP Company Code : a short code you choose, e.g. D01
+                        (you type this SAME code into the connector later)
+   - Distributor SAP ID : the distributor's SAP number, e.g. 100200
+                          (used as the prefix for auto-generated codes)
+   - Billing State : the distributor's state, e.g. Maharashtra   *** REQUIRED ***
+                     (decides GST: same-state = CGST+SGST, other state = IGST)
+   - Record type = Distributor,  Active = true
+
+STEP 2 - Turn on the syncs: create 7 SYNC CONFIG records
+   For EVERY row below: Enabled = true, Account = the distributor Account,
+   and a schedule (Interval every N minutes, OR Daily at a set time).
+
+     OBJECT TYPE      DIRECTION    WHAT IT DOES
+     -----------      ---------    ------------
+     Account          Both         Customer/supplier ledgers both ways
+                                   (also auto-fills each customer's State)
+     Product          To Tally     Products -> Tally (one-way; no read-back)
+     Invoice          Both         Sales invoices, both ways
+     Purchase         Both         Purchases, both ways
+     Order            Both         Sales & purchase orders, both ways
+     Note             Both         Credit / Debit notes, both ways
+     Purchase Order   To Tally     Primary purchase orders (you -> distributor)
+
+   Notes:
+   - "Both" = one row drives both directions. (Want different schedules per
+     direction? Make two rows instead: one To Tally, one To Salesforce.)
+   - Account and Product run BEFORE the transaction rows each cycle, so the
+     people/products a voucher needs always exist first.
+
+STEP 3 - Supporting data
+   - Every customer/supplier Account needs a Billing State (required).
+   - Every product needs its GST % (no rate = sold with no tax).
+
+
+============================================================
+ PART 2 - THE DISTRIBUTOR'S TALLY  (one time)
+============================================================
+
+STEP 1 - Load the add-on MordeSAPID.tdl   *** REQUIRED ***
+   (lets the connector tag records so nothing is duplicated)
+   1. Copy MordeSAPID.tdl onto the PC (e.g. Desktop).
+   2. F1 (Help) -> TDL & Add-On   (older Tally: F1 -> TDL Configuration)
+   3. Manage Local TDLs -> Load TDL on startup = Yes -> add the full path to
+      MordeSAPID.tdl
+   4. Accept, then RESTART Tally.
+
+STEP 2 - Enable the gateway (port 9000)   *** REQUIRED ***
+   F1 (Help) -> Settings -> Connectivity   (older: F1 -> Advanced Configuration)
+   -> TallyPrime acts as Server, Port 9000.
+   If this is off, nothing syncs. Keep Tally open while the connector runs.
+
+STEP 3 - Turn on features (F11)
+   - Enable sales order + purchase order processing.
+   - Enable GST. (The connector creates its own GST tax ledgers automatically.)
+
+STEP 4 - Check the period
+   Make sure the company's current period/date covers the dates you'll enter.
+
+   TIP: fill in each customer/supplier's State and GSTIN in Tally -- the
+   connector reads these and copies the State up to Salesforce automatically.
+
+
+============================================================
+ PART 3 - INSTALL & RUN THE CONNECTOR
+============================================================
+
+STEP 1 - Install
+   Run TallySalesforceConnector-Setup-2.2.1-qa.exe (or -qa-win7).
+   It's pre-connected to Salesforce -- no login/password to enter.
+
+STEP 2 - Point it at the distributor
+   Launch it -> a page opens at  http://localhost:3000
+   Enter the Distributor SAP Company Code (e.g. D01) -- must match the Account
+   EXACTLY.
+
+STEP 3 - (only if the distributor already has old ledgers) fill their States once
+   From the connector's install folder:
+     preview:  node dist\runSync.mjs --backfill-account-states
+     apply:    node dist\runSync.mjs --backfill-account-states --live
+
+STEP 4 - Let it run
+   It runs in the background on your schedule and restarts with the PC.
+   Use "Run Now" in the connector to trigger a cycle immediately.
+
+
+============================================================
+ PART 4 - VERIFY (one test)
+============================================================
+1. In Salesforce create a test customer for this distributor WITH a Billing State.
+2. In the connector click Run Now (or wait for the schedule).
+3. In Tally: the customer ledger appears (Gateway -> Ledgers).
+   Back in Salesforce: the record now shows a Tally reference = linked.
+4. Enter a purchase (goods in) and a sales invoice (goods out). Check:
+   - stock goes UP on purchase, DOWN on sale
+   - GST: same state -> CGST+SGST ; different state -> IGST
+5. Try a Credit Note (sales return) and Debit Note (purchase return).
+6. Watch the activity log (Trigger Log) for status/errors.
+
+
+============================================================
+ GOOD TO KNOW
+============================================================
+FIELD MAPPINGS in the connector screen:
+   - The connector's "Field Mappings" screen covers the TRANSACTION objects only:
+     Invoice, Purchase, Order, Note. You pick the Tally field -> Salesforce field
+     per direction (fetched from Salesforce; local edits possible).
+   - Account and Product do NOT have a mapping screen -- they sync a FIXED set of
+     fields built into the connector (Account: Name, SAP Id, Tally GUID, Billing
+     State, GSTIN, Group ; Product: Name, SAP Id, Tally GUID, GST %, HSN, UOM).
+     Nothing to configure or store for them.
+
+GST & STATE:
+   - Rate = the product's GST %.
+   - Same-state vs inter-state is decided from the distributor's State vs the
+     customer's State. Missing State -> treated as same-state (so State is required).
+
+IF SOMETHING GOES WRONG:
+   - "A Billing State is required" -> the record has no State; add it.
+   - Tax wrong (CGST/SGST vs IGST) -> check both parties' State.
+   - Product sold with no tax -> product missing GST %.
+   - Nothing syncs -> Sync Config Enabled? SAP code matches exactly? Tally open as
+     server on port 9000? Then check the activity log.
+   - "Voucher date is missing" -> date outside Tally's open period.
+   - Old customers keep failing "State required" -> their Tally ledgers have no
+     State; add it in Tally or run the backfill (Part 3 Step 3).
+
+
+============================================================
+ IT NOTES - one-time per Salesforce org (not per distributor)
+============================================================
+1. Assign the "Tally Sync Integration" permission set to the connector's
+   integration user.
+2. State & Country picklist: enable every Indian state the distributors/customers
+   are in (Setup -> State and Country/Territory Picklists -> Configure -> India ->
+   state Active + Visible, 2-letter Integration Value e.g. Telangana = TG).
+   Already enabled in QA: GJ, KA, DL, TN, UP, RJ, WB, AP, MH.
+3. Sync_Config__c Object Type values the connector understands:
+   Invoice, Purchase, Order, Note, PurchaseOrder, Account, Product.
+   (Product and PurchaseOrder are To-Tally only.)
+4. This build targets the QA (test) Salesforce. For go-live, rebuild the
+   installer against the production org.
