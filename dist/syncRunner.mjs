@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { loadSyncConfigs, resolveAccount, isDue, saveWatermark } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally } from './sfAgent.mjs';
-import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncGodownsToTally, syncGodownsToSalesforce } from './sfMaster.mjs';
+import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncGodownsToTally, syncGodownsToSalesforce, backfillSapIdsToTally } from './sfMaster.mjs';
 import { logToTrigger } from './sfLog.mjs';
 /** Masters (Account, Godown, then Product) run before transactions. Stable priority sort key. */
 function masterFirst(objectType) { return objectType === 'Account' ? 0 : objectType === 'Godown' ? 1 : objectType === 'Product' ? 2 : 3; }
@@ -117,6 +117,17 @@ export async function runCycle(opts) {
             catch (e) {
                 log(`[runner] Account SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
                 reports.push({ direction: 'ToTally', objectType: 'Account', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            // SAP backfill: write SF-generated SAP Ids back onto the Tally ledgers' MordeSAPID UDF,
+            // so a later fetch can tell a KNOWN ledger (has SAP) from a NEW one. Idempotent; runs in
+            // its own try/catch so a backfill error never aborts the account push.
+            try {
+                const b = await backfillSapIdsToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Account(SAP backfill)', ok: b.failed === 0, detail: `scanned ${b.scanned}, written ${b.pushed}, failed ${b.failed}` });
+            }
+            catch (e) {
+                log(`[runner] Account SAP backfill errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Account(SAP backfill)', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
             continue;
         }
