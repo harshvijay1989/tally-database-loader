@@ -38,7 +38,7 @@ const DIST_COLUMNS = [
 const STATUS_OPTIONS = [
     { label: 'All', value: 'all' },
     { label: 'Already configured', value: 'configured' },
-    { label: 'New', value: 'new' }
+    { label: 'Not configured yet', value: 'new' }
 ];
 
 export default class TallySyncConfigSetup extends LightningElement {
@@ -71,7 +71,7 @@ export default class TallySyncConfigSetup extends LightningElement {
         if (result.data) {
             this.distributors = result.data.map(d => ({
                 ...d,
-                configLabel: d.configCount > 0 ? `Yes (${d.configCount})` : 'No'
+                configLabel: d.configCount > 0 ? `Yes (${d.configCount})` : 'Not yet'
             }));
         }
     }
@@ -98,13 +98,6 @@ export default class TallySyncConfigSetup extends LightningElement {
         return this.filteredDistributors.filter(d => this.selectedIds.has(d.id)).map(d => d.id);
     }
 
-    // Selected distributors resolved from the FULL list (not the filtered rows) so names show even
-    // when the active filter/search hides them. Drives the pill chips above the search box.
-    get selectedDistributors() {
-        return this.distributors.filter(d => this.selectedIds.has(d.id));
-    }
-    get hasSelection() { return this.selectedIds.size > 0; }
-
     get selectedCount() { return this.selectedIds.size; }
     get totalCount() { return this.distributors.length; }
     get shownCount() { return this.filteredDistributors.length; }
@@ -125,14 +118,6 @@ export default class TallySyncConfigSetup extends LightningElement {
 
     handleSearch(event) { this.searchTerm = event.target.value; }
     handleStatusFilter(event) { this.statusFilter = event.detail.value; }
-
-    // Remove a selection via its pill's 'x' — works even when the row is hidden by the filter.
-    handleRemovePill(event) {
-        const id = event.target.name;
-        const next = new Set(this.selectedIds);
-        next.delete(id);
-        this.selectedIds = next;
-    }
 
     // Merge the datatable's selection against the Set: only the CURRENTLY VISIBLE rows can change
     // here, so re-derive their selected state and leave off-view selections intact.
