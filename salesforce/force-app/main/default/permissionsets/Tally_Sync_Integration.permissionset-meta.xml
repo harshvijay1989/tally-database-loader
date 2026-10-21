@@ -1282,6 +1282,56 @@
         <readable>true</readable>
         <editable>true</editable>
     </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Invoice__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Purchase__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Order__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Note__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Purchase_Order__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Invoice_Line__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Purchase_Line__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Order_Line__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Note_Line__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Purchase_Order_Line__c.SAP_Id__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
     <tabSettings>
         <tab>Tally_Order__c</tab>
         <visibility>Visible</visibility>
