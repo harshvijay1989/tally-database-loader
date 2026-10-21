@@ -22,5 +22,6 @@
     <tabs>Field_Mapping__c</tabs>
     <tabs>Tally_Product__c</tabs>
     <tabs>Tally_Account__c</tabs>
+    <tabs>Tally_Sync_Setup</tabs>
     <uiType>Lightning</uiType>
 </CustomApplication>

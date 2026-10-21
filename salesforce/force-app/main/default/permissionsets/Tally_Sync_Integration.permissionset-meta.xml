@@ -7,6 +7,10 @@
         <application>Tally_Sync</application>
         <visible>true</visible>
     </applicationVisibilities>
+    <classAccesses>
+        <apexClass>TallySyncConfigSetup</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
     <objectPermissions>
         <object>Sync_Config__c</object>
         <allowCreate>true</allowCreate>
@@ -1350,6 +1354,10 @@
     </tabSettings>
     <tabSettings>
         <tab>Tally_Invoice__c</tab>
+        <visibility>Visible</visibility>
+    </tabSettings>
+    <tabSettings>
+        <tab>Tally_Sync_Setup</tab>
         <visibility>Visible</visibility>
     </tabSettings>
     <tabSettings>

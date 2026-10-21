@@ -1,0 +1,116 @@
+<template>
+    <lightning-card title="Tally Sync Config Setup" icon-name="custom:custom18">
+        <div class="slds-var-p-horizontal_medium slds-var-p-bottom_medium">
+
+            <!-- Step 1: pick distributors -->
+            <h2 class="slds-text-heading_small slds-var-m-bottom_x-small">1. Select distributors</h2>
+            <p class="slds-text-color_weak slds-var-m-bottom_small">
+                Accounts with a SAP Id. "Sync configured" shows whether they already have Sync Config rows.
+            </p>
+            <lightning-datatable
+                key-field="id"
+                data={distributors}
+                columns={distColumns}
+                onrowselection={handleRowSelection}>
+            </lightning-datatable>
+
+            <div class="slds-var-m-top_x-small slds-text-body_small slds-text-color_weak">
+                {selectedCount} selected
+                <lightning-button
+                    class="slds-var-m-left_small"
+                    label="Load existing config"
+                    title="Pre-fill the matrix from a single already-configured distributor"
+                    disabled={loadDisabled}
+                    onclick={handleLoadExisting}>
+                </lightning-button>
+            </div>
+
+            <!-- Step 2: object type matrix -->
+            <h2 class="slds-text-heading_small slds-var-m-top_medium slds-var-m-bottom_x-small">2. Object types &amp; direction</h2>
+            <table class="slds-table slds-table_bordered slds-table_cell-buffer">
+                <thead>
+                    <tr class="slds-line-height_reset">
+                        <th scope="col" style="width:3rem"><div class="slds-truncate">Include</div></th>
+                        <th scope="col"><div class="slds-truncate">Object Type</div></th>
+                        <th scope="col"><div class="slds-truncate">Direction</div></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template for:each={matrix} for:item="row" for:index="idx">
+                        <tr key={row.objectType}>
+                            <td data-label="Include">
+                                <lightning-input
+                                    type="checkbox"
+                                    variant="label-hidden"
+                                    data-index={idx}
+                                    checked={row.include}
+                                    onchange={handleInclude}>
+                                </lightning-input>
+                            </td>
+                            <td data-label="Object Type">{row.objectType}</td>
+                            <td data-label="Direction">
+                                <lightning-combobox
+                                    variant="label-hidden"
+                                    data-index={idx}
+                                    value={row.direction}
+                                    options={directionOptions}
+                                    onchange={handleDirection}>
+                                </lightning-combobox>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <!-- Step 3: schedule -->
+            <h2 class="slds-text-heading_small slds-var-m-top_medium slds-var-m-bottom_x-small">3. Schedule</h2>
+            <div class="slds-grid slds-gutters slds-wrap">
+                <div class="slds-col slds-size_1-of-3">
+                    <lightning-combobox
+                        label="Schedule Type"
+                        value={scheduleType}
+                        options={scheduleOptions}
+                        onchange={handleScheduleType}>
+                    </lightning-combobox>
+                </div>
+                <template if:true={isInterval}>
+                    <div class="slds-col slds-size_1-of-3">
+                        <lightning-input
+                            type="number"
+                            label="Frequency (minutes)"
+                            value={frequencyMinutes}
+                            min="1"
+                            onchange={handleFrequency}>
+                        </lightning-input>
+                    </div>
+                </template>
+                <template if:true={isDaily}>
+                    <div class="slds-col slds-size_1-of-3">
+                        <lightning-input
+                            type="text"
+                            label="Daily time (HH:MM)"
+                            value={dailyTime}
+                            maxlength="5"
+                            placeholder="09:30"
+                            onchange={handleDailyTime}>
+                        </lightning-input>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Apply -->
+            <div class="slds-var-m-top_medium">
+                <lightning-button
+                    variant="brand"
+                    label="Apply to selected accounts"
+                    disabled={applyDisabled}
+                    onclick={handleApply}>
+                </lightning-button>
+                <template if:true={applying}>
+                    <lightning-spinner alternative-text="Applying" size="small"></lightning-spinner>
+                </template>
+            </div>
+
+        </div>
+    </lightning-card>
+</template>
