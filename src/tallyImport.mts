@@ -72,11 +72,13 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
         // Tally nets this quantity against that order and tracks the pending/short balance.
         + (!v.isOrder && i.orderNo ? `<ORDERNO>${esc(i.orderNo)}</ORDERNO>` : '')
-        // Godown/batch allocation — emitted ONLY when a godown is set, so a line with no godown
-        // produces byte-identical XML to before (single-location distributors and companies without
-        // multiple-godowns enabled are unaffected). One godown per line -> the single allocation
-        // carries the full line amount/qty.
-        + (i.godown ? '<BATCHALLOCATIONS.LIST><GODOWNNAME>' + esc(i.godown) + '</GODOWNNAME><BATCHNAME>' + esc(i.batch || 'Primary Batch') + '</BATCHNAME><AMOUNT>' + i.amount.toFixed(2) + '</AMOUNT><ACTUALQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</ACTUALQTY><BILLEDQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</BILLEDQTY></BATCHALLOCATIONS.LIST>' : '')
+        // Godown/batch allocation — emitted ONLY for non-order vouchers with a godown set. A line
+        // with no godown (or ANY order voucher) produces byte-identical XML to before: single-location
+        // distributors and companies without multi-godown are unaffected, and ORDER vouchers (Sales/
+        // Purchase Order) are commitments with no stock movement — Tally REJECTS an order carrying a
+        // BATCHALLOCATIONS block, so orders must never emit one. One godown per line -> the single
+        // allocation carries the full line amount/qty.
+        + ((!v.isOrder && i.godown) ? '<BATCHALLOCATIONS.LIST><GODOWNNAME>' + esc(i.godown) + '</GODOWNNAME><BATCHNAME>' + esc(i.batch || 'Primary Batch') + '</BATCHNAME><AMOUNT>' + i.amount.toFixed(2) + '</AMOUNT><ACTUALQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</ACTUALQTY><BILLEDQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</BILLEDQTY></BATCHALLOCATIONS.LIST>' : '')
         + '<ACCOUNTINGALLOCATIONS.LIST>'
         + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`

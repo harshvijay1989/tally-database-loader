@@ -316,8 +316,10 @@ export function assembleVoucher(objectType: string, logical: Record<string, any>
             // Per-line warehouse: explicit Godown__c wins; else the company default (set only when
             // multi-godown is enabled — Tally then REQUIRES an allocation on every line); else ''
             // (single-location company) -> buildVoucherImportXml emits no allocation (unchanged XML).
-            // Batch defaults to 'Primary Batch' at XML build time when a godown is present.
-            godown: (ln.godown ? String(ln.godown) : (defaultGodown || '')) || undefined,
+            // ORDER vouchers get NO godown (no stock movement; Tally rejects an order with a batch
+            // allocation) — so orders stay byte-identical to pre-godown behaviour. Batch defaults to
+            // 'Primary Batch' at XML build time when a godown is present.
+            godown: rule.order ? undefined : ((ln.godown ? String(ln.godown) : (defaultGodown || '')) || undefined),
             batch: ln.batch ? String(ln.batch) : undefined,
         });
     }
