@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { runCycle, bakedSapCode } from './syncRunner.mjs';
+import { runCycle, bakedSapId } from './syncRunner.mjs';
 import { resolveAccount } from './sfConfig.mjs';
 import { backfillAccountStates } from './sfMaster.mjs';
 
@@ -44,16 +44,16 @@ async function main() {
     const { server, port } = loadTally();
     const log = (m: string, e?: boolean) => console[e ? 'error' : 'log'](m);
 
-    const sapCode = bakedSapCode();
-    if (!sapCode) { console.error('No distributor SAP code in connections.json (distributor.sapCode). Aborting.'); process.exit(2); }
+    const sapId = bakedSapId();
+    if (!sapId) { console.error('No distributor SAP Id in connections.json (distributor.sapId). Aborting.'); process.exit(2); }
     console.log(`Tally at ${server}:${port} — ${dryRun ? 'DRY-RUN (no writes)' : 'LIVE'}${force ? ', forced' : ''}${objectType ? `, object=${objectType}` : ''}${direction ? `, direction=${direction}` : ''}`);
 
     // One-time maintenance: backfill GST state on legacy stateless Tally_Account__c rows. Resolves
-    // the distributor the same way runCycle does (by baked SAP code), runs the backfill, and exits
+    // the distributor the same way runCycle does (by baked SAP Id), runs the backfill, and exits
     // WITHOUT running a normal cycle. Dry-run by default; --live performs the writes.
     if (args.has('--backfill-account-states')) {
-        const acct = await resolveAccount(sapCode);
-        if (!acct) { console.error(`No Account in Salesforce with SAP_Company_Code__c = ${sapCode} — cannot backfill`); process.exit(2); }
+        const acct = await resolveAccount(sapId);
+        if (!acct) { console.error(`No Account in Salesforce with SAP_ID__c = ${sapId} — cannot backfill`); process.exit(2); }
         const r = await backfillAccountStates(acct, server, port, { dryRun, log });
         console.log(`\n=== account-state backfill ===\nscanned=${r.scanned} filled=${r.filled} unresolvable=${r.unresolvable} failed=${r.failed}`);
         if (r.errors.length) r.errors.slice(0, 10).forEach(e => console.error('  ' + e));

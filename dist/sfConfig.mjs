@@ -30,13 +30,13 @@ export function isDue(c, now = Date.now()) {
  * direction. A row with Direction__c = 'Both' counts for either direction. Only Enabled rows
  * are returned — a disabled row means the connector must not act on it.
  */
-export async function loadSyncConfigs(sapCode, direction) {
+export async function loadSyncConfigs(sapId, direction) {
     const soql = `SELECT Id, Object_Type__c, Direction__c, Enabled__c, Schedule_Type__c, Frequency_Minutes__c, ` +
         `Daily_Time__c, Last_AlterId__c, Last_Run__c, Debug__c, Retry_Enabled__c, Max_Retry_Count__c, ` +
         `Retry_Interval_Minutes__c ` +
         `FROM Sync_Config__c ` +
         `WHERE Enabled__c = true ` +
-        `AND Account__r.SAP_Company_Code__c = '${sapCode.replace(/'/g, "\\'")}' ` +
+        `AND Account__r.SAP_ID__c = '${sapId.replace(/'/g, "\\'")}' ` +
         `AND (Direction__c = '${direction}' OR Direction__c = 'Both') ` +
         `ORDER BY Object_Type__c`;
     const rows = await sfQuery(soql);
@@ -55,14 +55,15 @@ export async function loadSyncConfigs(sapCode, direction) {
         retryIntervalMinutes: Number(r.Retry_Interval_Minutes__c) || 15,
     })).filter(c => c.objectType);
 }
-/** Resolve the distributor Account for this SAP code. The Account IS the distributor identity;
- *  the connector matches its configured SAP code against Account.SAP_Company_Code__c. */
-export async function resolveAccount(sapCode) {
-    const rows = await sfQuery(`SELECT Id, Name, SAP_Company_Code__c FROM Account ` +
-        `WHERE SAP_Company_Code__c = '${sapCode.replace(/'/g, "\\'")}' LIMIT 1`);
+/** Resolve the distributor Account for this SAP Id. The Account IS the distributor identity;
+ *  the connector matches its configured SAP Id against Account.SAP_ID__c (unique per distributor).
+ *  SAP_Company_Code__c is still read (deprecated) so inbound rows keep that field populated too. */
+export async function resolveAccount(sapId) {
+    const rows = await sfQuery(`SELECT Id, Name, SAP_ID__c, SAP_Company_Code__c FROM Account ` +
+        `WHERE SAP_ID__c = '${sapId.replace(/'/g, "\\'")}' LIMIT 1`);
     if (!rows.length)
         return null;
-    return { id: rows[0].Id, name: rows[0].Name, sapCode: rows[0].SAP_Company_Code__c };
+    return { id: rows[0].Id, name: rows[0].Name, sapId: rows[0].SAP_ID__c, companyCode: rows[0].SAP_Company_Code__c || '' };
 }
 /** Advance the incremental watermark after a successful Tally->SF pass. */
 export async function saveWatermark(configId, lastAlterId) {

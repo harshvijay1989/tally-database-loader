@@ -52,13 +52,13 @@ function mergeOverrides(objectType: string, direction: string, sfMaps: FieldMap[
 
 /**
  * Download the active mappings for one object + direction, in sort order. Scoped to this
- * distributor by SAP code: a per-distributor override (Account set to this code) plus the
+ * distributor by SAP Id: a per-distributor override (Account set to this SAP Id) plus the
  * shared defaults (Account blank). A per-distributor row wins over a default for the same
- * target field. Omit sapCode to load only the shared defaults.
+ * target field. Omit sapId to load only the shared defaults.
  */
-export async function loadMappings(objectType: string, direction: string, sapCode?: string): Promise<FieldMap[]> {
-    const scope = sapCode
-        ? `AND (Account__c = null OR Account__r.SAP_Company_Code__c = '${sapCode.replace(/'/g, "\\'")}')`
+export async function loadMappings(objectType: string, direction: string, sapId?: string): Promise<FieldMap[]> {
+    const scope = sapId
+        ? `AND (Account__c = null OR Account__r.SAP_ID__c = '${sapId.replace(/'/g, "\\'")}')`
         : `AND Account__c = null`;
     const rows = await sfQuery(
         `SELECT Source_Field__c, Target_Field__c, Constant_Value__c, Transform__c, Account__c FROM Field_Mapping__c ` +

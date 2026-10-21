@@ -58,7 +58,7 @@ const toRate = (v: string): number | null => toNum(String(v || '').split('/')[0]
  * it each cycle and join by name. Which Tally field holds it is mapping-driven (editable per
  * distributor): a Field_Mapping row Object_Type='StockItem', target 'Product_SAP_Id__c'.
  */
-export async function loadStockItemSapIds(server: string, port: number, sapCode: string, log: LogFn): Promise<Map<string, string>> {
+export async function loadStockItemSapIds(server: string, port: number, sapId: string, log: LogFn): Promise<Map<string, string>> {
     // SAP Id lives in the MordeSAPID UDF (the standard), which only projects via COMPUTE — a plain
     // FETCH silently drops it. readStockItemKeys reads it correctly. Only SAP-tagged items matter.
     const out = new Map<string, string>();
@@ -71,7 +71,7 @@ export async function loadStockItemSapIds(server: string, port: number, sapCode:
 }
 
 /** Build child line records for one voucher row (empty if no inventory). Parent set by external id. */
-function buildLines(spec: ObjectSpec, row: Record<string, string>, sapCode: string, itemSap: Map<string, string>): Record<string, any>[] {
+function buildLines(spec: ObjectSpec, row: Record<string, string>, sapId: string, companyCode: string, itemSap: Map<string, string>): Record<string, any>[] {
     const names = splitMulti(row[`${INV}.stockitemname`]);
     if (!names.length) return [];
     const qty = splitMulti(row[`${INV}.actualqty`]);
@@ -96,7 +96,7 @@ function buildLines(spec: ObjectSpec, row: Record<string, string>, sapCode: stri
             Rate__c: toRate(rate[i]), Discount__c: toNum(disc[i]), Amount__c: toNum(amt[i]),
             Accounting_Ledger__c: ledger[i] || '',
             Godown__c: godown[i] || undefined, Batch__c: batch[i] || undefined,
-            Line_No__c: i + 1, SAP_Company_Code__c: sapCode,
+            Line_No__c: i + 1, SAP_Id__c: sapId, SAP_Company_Code__c: companyCode,
         };
     });
 }
@@ -128,7 +128,7 @@ export async function syncToSalesforce(
 
     // Tally row keys are lowercased by parseCollection, so match ToSalesforce source (a Tally
     // field name) case-insensitively; the SF-side target stays exactly as authored.
-    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapCode)).map(m => ({ ...m, source: m.source?.toLowerCase() }));
+    const maps = (await loadMappings(spec.objectType, 'ToSalesforce', acct.sapId)).map(m => ({ ...m, source: m.source?.toLowerCase() }));
     if (!maps.length) {
         log(`[agent] no active ToSalesforce mappings for ${spec.objectType} — nothing to do`, true);
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
@@ -169,7 +169,8 @@ export async function syncToSalesforce(
             [spec.externalId]: row.guid,
             Tally_AlterId__c: alterId,
             Tally_Voucher_Number__c: row.vouchernumber || mapped.Tally_Voucher_Number__c || '',
-            SAP_Company_Code__c: acct.sapCode,
+            SAP_Id__c: acct.sapId,                      // new distributor identity
+            SAP_Company_Code__c: acct.companyCode,      // deprecated, still populated for existing consumers
             Direction__c: 'ToSalesforce',
             Sync_Status__c: 'Done',
             Error__c: '',
@@ -185,8 +186,8 @@ export async function syncToSalesforce(
 
     // Inventory line items (product / qty / rate) -> child rows, parent linked by external id.
     // Load the stock-item name -> Morde SAP Id map once (from the Tally stock-item master).
-    const itemSap = spec.lineObject ? await loadStockItemSapIds(server, port, acct.sapCode, log) : new Map<string, string>();
-    const lineRecords = spec.lineObject ? clean.flatMap(row => buildLines(spec, row, acct.sapCode, itemSap)) : [];
+    const itemSap = spec.lineObject ? await loadStockItemSapIds(server, port, acct.sapId, log) : new Map<string, string>();
+    const lineRecords = spec.lineObject ? clean.flatMap(row => buildLines(spec, row, acct.sapId, acct.companyCode, itemSap)) : [];
 
     if (opts.dryRun) {
         log(`[agent] ${spec.objectType}: dry-run — would upsert ${records.length} rows + ${lineRecords.length} line items (watermark -> ${res.newWatermark})`);
@@ -352,7 +353,7 @@ export function assembleVoucher(objectType: string, logical: Record<string, any>
 
 /** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
  *  Reads the MordeSAPID UDF (via COMPUTE) like loadStockItemSapIds. */
-async function loadStockItemBySap(server: string, port: number, sapCode: string, log: LogFn): Promise<Map<string, { name: string; unit: string }>> {
+async function loadStockItemBySap(server: string, port: number, sapId: string, log: LogFn): Promise<Map<string, { name: string; unit: string }>> {
     const out = new Map<string, { name: string; unit: string }>();
     try {
         const keys = await readStockItemKeys(server, port, { sapTaggedOnly: true });
@@ -362,7 +363,7 @@ async function loadStockItemBySap(server: string, port: number, sapCode: string,
 }
 
 /** Read Pending line-item rows for the given header Ids, grouped by parent header Id. */
-async function loadPendingLines(spec: ObjectSpec, headerIds: string[], sapCode: string, log: LogFn): Promise<Map<string, LogicalLine[]>> {
+async function loadPendingLines(spec: ObjectSpec, headerIds: string[], sapId: string, log: LogFn): Promise<Map<string, LogicalLine[]>> {
     const out = new Map<string, LogicalLine[]>();
     if (!spec.lineObject || !headerIds.length) return out;
     const parentField = spec.lineParentRel!.replace('__r', '__c'); // e.g. 'Invoice__r' -> 'Invoice__c'
@@ -414,11 +415,11 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
     if (!['Invoice', 'Purchase', 'Order', 'Note', 'PurchaseOrder'].includes(spec.objectType)) { log(`[agent] SF->Tally not supported for ${spec.objectType} yet`, true); return { pending: 0, created: 0, failed: 0, errors: [`no rule for ${spec.objectType}`] }; }
-    const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapCode);
+    const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapId);
     if (!maps.length) { log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true); return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] }; }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source!))];
     const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} ` +
-        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Company_Code__c = '${acct.sapCode.replace(/'/g, "\\'")}'`;
+        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Id__c = '${acct.sapId.replace(/'/g, "\\'")}'`;
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
     const res: ToTallyResult = { pending: rows.length, created: 0, failed: 0, errors: [] };
@@ -428,8 +429,8 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     }
 
     // Load line items for these headers (grouped by parent) + the reverse product map.
-    const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapCode, log);
-    const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapCode, log) : new Map();
+    const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapId, log);
+    const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapId, log) : new Map();
     // Resolve the company's default godown ONCE per run. Non-empty only when multi-godown is enabled
     // (Tally then rejects any inventory line with no allocation); '' leaves single-location companies
     // byte-identical. Only relevant for inventory vouchers (those with line items).
@@ -444,7 +445,7 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     let distState = '';
     let partyStates = new Map<string, string>();
     if (taxable) {
-        gstCfg = await loadGstConfig(acct.sapCode);
+        gstCfg = await loadGstConfig(acct.sapId);
         rateBySap = await loadProductGstRates(acct.id);
         distState = await loadDistributorState(acct.id);
         partyStates = await loadPartyStates(acct.id);

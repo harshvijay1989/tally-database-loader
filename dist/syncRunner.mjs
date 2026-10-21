@@ -5,12 +5,13 @@ import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syn
 import { logToTrigger } from './sfLog.mjs';
 /** Masters (Account, Godown, then Product) run before transactions. Stable priority sort key. */
 function masterFirst(objectType) { return objectType === 'Account' ? 0 : objectType === 'Godown' ? 1 : objectType === 'Product' ? 2 : 3; }
-/** The distributor's SAP company code is baked into the per-distributor build. */
-export function bakedSapCode() {
-    var _a, _b;
+/** The distributor's SAP Id is baked into the per-distributor build. Prefer the new `sapId` key;
+ *  fall back to the deprecated `sapCode` key so existing connections.json files keep working. */
+export function bakedSapId() {
+    var _a, _b, _c, _d;
     try {
         const c = JSON.parse(fs.readFileSync('./connections.json', 'utf8'));
-        return ((_a = c.distributor) === null || _a === void 0 ? void 0 : _a.sapCode) || ((_b = c.salesforce) === null || _b === void 0 ? void 0 : _b.sapCode) || '';
+        return ((_a = c.distributor) === null || _a === void 0 ? void 0 : _a.sapId) || ((_b = c.distributor) === null || _b === void 0 ? void 0 : _b.sapCode) || ((_c = c.salesforce) === null || _c === void 0 ? void 0 : _c.sapId) || ((_d = c.salesforce) === null || _d === void 0 ? void 0 : _d.sapCode) || '';
     }
     catch {
         return '';
@@ -21,20 +22,20 @@ export function bakedSapCode() {
 export async function runCycle(opts) {
     const log = opts.log || (() => { });
     const reports = [];
-    const sapCode = bakedSapCode();
-    if (!sapCode) {
-        log('[runner] no distributor SAP code configured (connections.json.distributor.sapCode)', true);
+    const sapId = bakedSapId();
+    if (!sapId) {
+        log('[runner] no distributor SAP Id configured (connections.json.distributor.sapId)', true);
         return reports;
     }
-    const acct = await resolveAccount(sapCode);
+    const acct = await resolveAccount(sapId);
     if (!acct) {
-        log(`[runner] no Account in Salesforce with SAP_Company_Code__c = ${sapCode} — cannot sync`, true);
-        await logToTrigger({ operation: 'Cycle', status: 'Error', errorMessage: `No Account for SAP code ${sapCode}` });
+        log(`[runner] no Account in Salesforce with SAP_ID__c = ${sapId} — cannot sync`, true);
+        await logToTrigger({ operation: 'Cycle', status: 'Error', errorMessage: `No Account for SAP Id ${sapId}` });
         return reports;
     }
-    log(`[runner] distributor ${acct.name} (${sapCode}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
+    log(`[runner] distributor ${acct.name} (${sapId}) — cycle start${opts.dryRun ? ' (dry-run)' : ''}`);
     // ---- Tally -> Salesforce (read) ----
-    const toSf = ((opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapCode, 'ToSalesforce'))
+    const toSf = ((opts.direction && opts.direction !== 'ToSalesforce') ? [] : await loadSyncConfigs(sapId, 'ToSalesforce'))
         .sort((a, b) => masterFirst(a.objectType) - masterFirst(b.objectType)); // masters before transactions (stable)
     for (const cfg of toSf) {
         if (opts.objectType && cfg.objectType !== opts.objectType)
@@ -98,7 +99,7 @@ export async function runCycle(opts) {
         }
     }
     // ---- Salesforce -> Tally (write) ----
-    const toTally = ((opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapCode, 'ToTally'))
+    const toTally = ((opts.direction && opts.direction !== 'ToTally') ? [] : await loadSyncConfigs(sapId, 'ToTally'))
         .sort((a, b) => masterFirst(a.objectType) - masterFirst(b.objectType)); // masters before transactions (stable)
     for (const cfg of toTally) {
         if (opts.objectType && cfg.objectType !== opts.objectType)

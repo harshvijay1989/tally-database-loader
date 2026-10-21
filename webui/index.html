@@ -281,8 +281,8 @@
 
     <div class="connsec" id="distConnSec">
       <h4><span class="chip sf">Distributor</span> This connector's identity</h4>
-      <p class="hint">Enter this distributor's <b>SAP Company Code</b>. It's matched against the Salesforce <b>Account</b> (Account.SAP_Company_Code__c) — that Account is the distributor. The connector only syncs the config, mappings and records for this code. Save Salesforce credentials above first so it can verify.</p>
-      <div class="frow" style="max-width:280px"><label>SAP Company Code</label><input id="distSapCode" placeholder="e.g. DEV001"></div>
+      <p class="hint">Enter this distributor's <b>SAP Id</b>. It's matched against the Salesforce <b>Account</b> (Account.SAP_ID__c) — that Account is the distributor. The connector only syncs the config, mappings and records for this SAP Id. Save Salesforce credentials above first so it can verify.</p>
+      <div class="frow" style="max-width:280px"><label>SAP Id</label><input id="distSapId" placeholder="e.g. DEV001"></div>
       <div class="connfoot">
         <button onclick="saveDistributor()">Save &amp; verify</button>
         <span id="distConnStat" class="connstat"></span>
@@ -483,7 +483,7 @@ async function loadScheduler(){
     const s=await (await fetch('/api/scheduler/status')).json();
     const fmt=v=>v?new Date(v).toLocaleString():'—';
     sum.innerHTML=`<b>${s.enabled?'● Running':'○ Paused'}</b> · ticks every ${s.tickSeconds}s · last check ${fmt(s.lastTickAt)} · last run ${fmt(s.lastRunAt)}`
-      +(s.distributor?` · distributor <b>${s.distributor}</b> (${s.sapCode})`:'')+(s.note?`<br><span style="color:#b45309">${s.note}</span>`:'')+(s.lastError?`<br><span style="color:#dc2626">${s.lastError}</span>`:'');
+      +(s.distributor?` · distributor <b>${s.distributor}</b> (${s.sapId})`:'')+(s.note?`<br><span style="color:#b45309">${s.note}</span>`:'')+(s.lastError?`<br><span style="color:#dc2626">${s.lastError}</span>`:'');
     if(!s.configs||!s.configs.length){ t.innerHTML='<tr><td style="padding:8px;color:var(--muted)">No enabled Sync Config rows found for this distributor.</td></tr>'; return; }
     t.innerHTML='<tr style="text-align:left;border-bottom:1px solid #e5e7eb"><th style="padding:6px">Object</th><th>Direction</th><th>Schedule</th><th>Last run</th><th>Next due</th><th></th></tr>'
       +s.configs.map(c=>`<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px"><b>${c.objectType}</b></td><td>${c.direction}</td><td>${c.schedule}</td><td>${fmt(c.lastRun)}</td><td>${fmt(c.nextDue)} ${c.due?'<span style="color:#16a34a">(due)</span>':''}</td><td><button class="mini ghost" onclick="schedRunNow('${c.objectType}')">Run now</button></td></tr>`).join('');
@@ -514,16 +514,16 @@ async function openConnections(){
   document.getElementById('tlConnStat').textContent='';
   try{ const uc = await (await fetch('/api/connector/config')).json(); document.getElementById('uiPort').value = uc.port||3000; document.getElementById('uiExpose').checked = !!uc.exposeNetwork; }catch(e){}
   document.getElementById('uiConnStat').textContent='';
-  try{ const d = await (await fetch('/api/distributor')).json(); document.getElementById('distSapCode').value = d.sapCode||''; }catch(e){}
+  try{ const d = await (await fetch('/api/distributor')).json(); document.getElementById('distSapId').value = d.sapId||''; }catch(e){}
   document.getElementById('distConnStat').textContent='';
   document.getElementById('connModal').classList.remove('hidden');
 }
 async function saveDistributor(){
   const stat=document.getElementById('distConnStat'); stat.textContent='Saving…'; stat.className='connstat';
-  const sapCode=(document.getElementById('distSapCode').value||'').trim();
-  const r = await (await fetch('/api/distributor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sapCode})})).json();
+  const sapId=(document.getElementById('distSapId').value||'').trim();
+  const r = await (await fetch('/api/distributor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sapId})})).json();
   if(r.verified){ stat.textContent='✓ matched · '+(r.accountName||''); stat.className='connstat ok'; }
-  else if(!sapCode){ stat.textContent='✓ cleared'; stat.className='connstat'; }
+  else if(!sapId){ stat.textContent='✓ cleared'; stat.className='connstat'; }
   else { stat.textContent='⚠ saved · '+(r.error||'not verified'); stat.className='connstat bad'; }
 }
 function setGoogleStat(on, email){ const s=document.getElementById('gConnStat'); s.textContent = on ? ('✓ connected'+(email?' · '+email:'')) : ''; s.className='connstat'+(on?' ok':''); }

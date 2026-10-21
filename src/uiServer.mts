@@ -5,10 +5,10 @@ import child_process from 'node:child_process';
 import { URL } from 'node:url';
 import * as tallyLive from './tallyLive.mjs';
 import { httpFetch } from './httpFetch.mjs'; // fetch-like helper that also runs on Node 14 (Win7/8)
-import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP code against Account.SAP_Company_Code__c
+import { resolveAccount } from './sfConfig.mjs'; // verify the distributor SAP Id against Account.SAP_ID__c
 import * as scheduler from './scheduler.mjs'; // self-running in-connector sync scheduler
 import { loadMappings, getOverride, setOverride, type OverrideRow } from './sfMapping.mjs'; // per-distributor local mapping edits
-import { bakedSapCode } from './syncRunner.mjs';
+import { bakedSapId } from './syncRunner.mjs';
 import { SPECS } from './sfAgent.mjs'; // staging <-> Tally voucher-type specs (for field discovery)
 import { sfDescribeFields } from './sfClient.mjs';
 
@@ -77,7 +77,7 @@ function mapSlug(name: string) { return (String(name).replace(/[^a-zA-Z0-9 _-]/g
 // --- connections.json -------------------------------------------------------
 interface SfConn { instanceUrl?: string; clientId?: string; clientSecret?: string; apiVersion?: string; loginUrl?: string; refreshToken?: string; }
 interface GoogleConn { clientId?: string; clientSecret?: string; refreshToken?: string; folderId?: string; }
-interface DistributorConn { sapCode?: string; }  // this connector's distributor identity = Account.SAP_Company_Code__c
+interface DistributorConn { sapId?: string; sapCode?: string; }  // distributor identity = Account.SAP_ID__c (sapCode is the deprecated key, still read)
 interface Connections { salesforce: SfConn; google: GoogleConn; distributor: DistributorConn; }
 
 function loadConn(): Connections {
@@ -671,7 +671,7 @@ const server = http.createServer(async (req, res) => {
             const object = url.searchParams.get('object') || 'Invoice';
             const direction = url.searchParams.get('direction') || 'ToSalesforce';
             try {
-                const rows = await loadMappings(object, direction, bakedSapCode() || undefined);
+                const rows = await loadMappings(object, direction, bakedSapId() || undefined);
                 return json(200, { object, direction, rows, overrides: getOverride(object, direction) });
             } catch (e: any) { return json(200, { object, direction, rows: [], overrides: {}, error: String(e?.message || e) }); }
         }
@@ -710,23 +710,25 @@ const server = http.createServer(async (req, res) => {
             return json(200, { enabled: !!b.enabled });
         }
 
-        // --- Distributor identity (SAP company code) ---
+        // --- Distributor identity (SAP Id) ---
         if (url.pathname === '/api/distributor' && req.method === 'GET') {
-            return json(200, { sapCode: loadConn().distributor.sapCode || '' });
+            const d = loadConn().distributor;
+            return json(200, { sapId: d.sapId || d.sapCode || '' }); // prefer new key, fall back to deprecated
         }
         if (url.pathname === '/api/distributor' && req.method === 'POST') {
             const b = JSON.parse(await readBody(req));
-            const sapCode = String(b.sapCode || '').trim();
+            const sapId = String(b.sapId ?? b.sapCode ?? '').trim(); // accept old key for back-compat
             const c = loadConn();
-            c.distributor.sapCode = sapCode;
+            c.distributor.sapId = sapId;
+            delete c.distributor.sapCode; // migrate off the deprecated key on save
             saveConn(c);
-            logLine(`Distributor SAP code saved (${sapCode || 'cleared'})`);
-            if (!sapCode) return json(200, { saved: true, verified: false });
-            // Verify against the Salesforce Account, same path the sync agent uses.
+            logLine(`Distributor SAP Id saved (${sapId || 'cleared'})`);
+            if (!sapId) return json(200, { saved: true, verified: false });
+            // Verify against the Salesforce Account (SAP_ID__c), same path the sync agent uses.
             try {
-                const acct = await resolveAccount(sapCode);
+                const acct = await resolveAccount(sapId);
                 if (acct) return json(200, { saved: true, verified: true, accountName: acct.name });
-                return json(200, { saved: true, verified: false, error: `No Salesforce Account has SAP code "${sapCode}"` });
+                return json(200, { saved: true, verified: false, error: `No Salesforce Account has SAP Id "${sapId}"` });
             } catch (e: any) {
                 return json(200, { saved: true, verified: false, error: `Saved, but could not verify: ${String(e?.message || e)}` });
             }

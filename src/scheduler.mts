@@ -1,4 +1,4 @@
-import { runCycle, bakedSapCode } from './syncRunner.mjs';
+import { runCycle, bakedSapId } from './syncRunner.mjs';
 import { loadSyncConfigs, resolveAccount, nextDue, isDue, type SyncConfig } from './sfConfig.mjs';
 import type { CycleReport } from './syncRunner.mjs';
 
@@ -68,13 +68,13 @@ export async function schedulerStatus(): Promise<any> {
         lastTickAt: state.lastTickAt, lastRunAt: state.lastRunAt, lastError: state.lastError,
         lastReports: state.lastReports, tickSeconds: TICK_MS / 1000,
     };
-    const sapCode = bakedSapCode();
-    if (!sapCode) return { ...base, configs: [], note: 'No distributor SAP code configured.' };
+    const sapId = bakedSapId();
+    if (!sapId) return { ...base, configs: [], note: 'No distributor SAP Id configured.' };
     try {
-        const acct = await resolveAccount(sapCode);
-        if (!acct) return { ...base, configs: [], note: `No Account for SAP code ${sapCode}.` };
+        const acct = await resolveAccount(sapId);
+        if (!acct) return { ...base, configs: [], note: `No Account for SAP Id ${sapId}.` };
         const now = Date.now();
-        const both = [...await loadSyncConfigs(sapCode, 'ToSalesforce'), ...await loadSyncConfigs(sapCode, 'ToTally')];
+        const both = [...await loadSyncConfigs(sapId, 'ToSalesforce'), ...await loadSyncConfigs(sapId, 'ToTally')];
         const seen = new Set<string>();
         const configs = both.filter(c => { const k = c.id + c.direction; if (seen.has(k)) return false; seen.add(k); return true; })
             .map((c: SyncConfig) => ({
@@ -82,7 +82,7 @@ export async function schedulerStatus(): Promise<any> {
                 schedule: c.scheduleType === 'Daily' ? `Daily at ${c.dailyTime || '(unset)'}` : `Every ${c.frequencyMinutes} min`,
                 lastRun: c.lastRun || null, nextDue: new Date(nextDue(c, now)).toISOString(), due: isDue(c, now),
             }));
-        return { ...base, distributor: acct.name, sapCode, configs };
+        return { ...base, distributor: acct.name, sapId, configs };
     } catch (e: any) {
         return { ...base, configs: [], note: `Could not load config: ${String(e?.message || e)}` };
     }

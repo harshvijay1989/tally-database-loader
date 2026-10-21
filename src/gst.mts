@@ -120,8 +120,8 @@ export async function ensureGstLedgers(server: string, port: number, cfg: GstLed
 /** Load this distributor's GST ledger names from Field_Mapping__c (Object_Type='GST'): each row's
  *  Target_Field__c is OutputCGST/OutputSGST/OutputIGST/InputCGST/InputSGST/InputIGST and its
  *  Constant_Value__c is that company's ledger name. Scoped per distributor like other mappings. */
-export async function loadGstConfig(sapCode: string): Promise<GstLedgerConfig> {
-    const maps = await loadMappings('GST', 'ToTally', sapCode);
+export async function loadGstConfig(sapId: string): Promise<GstLedgerConfig> {
+    const maps = await loadMappings('GST', 'ToTally', sapId);
     const key: Record<string, keyof GstLedgerConfig> = {
         OutputCGST: 'outputCgst', OutputSGST: 'outputSgst', OutputIGST: 'outputIgst',
         InputCGST: 'inputCgst', InputSGST: 'inputSgst', InputIGST: 'inputIgst',
