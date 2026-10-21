@@ -8,6 +8,27 @@
                 Accounts with a SAP Id. "Sync configured" shows whether they already have Sync Config rows.
             </p>
 
+            <!-- Selected distributors (names shown even when hidden by the active filter/search) -->
+            <div class="slds-var-m-bottom_small">
+                <p class="slds-text-title_caps slds-var-m-bottom_xx-small">Selected ({selectedCount})</p>
+                <template if:true={hasSelection}>
+                    <div class="slds-grid slds-wrap slds-gutters_xx-small">
+                        <template for:each={selectedDistributors} for:item="d">
+                            <lightning-pill
+                                key={d.id}
+                                label={d.name}
+                                name={d.id}
+                                class="slds-var-m-right_xx-small slds-var-m-bottom_xx-small"
+                                onremove={handleRemovePill}>
+                            </lightning-pill>
+                        </template>
+                    </div>
+                </template>
+                <template if:false={hasSelection}>
+                    <p class="slds-text-body_small slds-text-color_weak">No distributors selected yet.</p>
+                </template>
+            </div>
+
             <div class="slds-grid slds-gutters slds-wrap slds-var-m-bottom_x-small">
                 <div class="slds-col slds-size_1-of-2">
                     <lightning-input
