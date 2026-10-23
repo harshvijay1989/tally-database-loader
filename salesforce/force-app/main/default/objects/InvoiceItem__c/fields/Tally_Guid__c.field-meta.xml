@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Tally_Guid__c</fullName>
+    <label>Tally GUID</label>
+    <length>80</length>
+    <type>Text</type>
+    <externalId>true</externalId>
+    <unique>false</unique>
+    <required>false</required>
+    <description>Permanent Tally voucher/line GUID for this invoice line, copied from the Tally_Invoice_Line__c staging record. Hard SF&lt;-&gt;Tally identity.</description>
+</CustomField>

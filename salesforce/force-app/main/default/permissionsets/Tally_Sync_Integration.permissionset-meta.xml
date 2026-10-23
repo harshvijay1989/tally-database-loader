@@ -1218,6 +1218,16 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Invoice__c.Tally_Guid__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>InvoiceItem__c.Tally_Guid__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Tally_Order__c.SAP_Id__c</field>
         <readable>true</readable>
         <editable>true</editable>
