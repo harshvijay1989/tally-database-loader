@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { loadSyncConfigs, resolveAccount, isDue, saveWatermark, type Direction } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally, type LogFn } from './sfAgent.mjs';
 import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncWarehousesToTally, syncWarehousesToSalesforce, backfillSapIdsToTally } from './sfMaster.mjs';
+import { syncPricesToTally } from './sfPrice.mjs';
 import { logToTrigger } from './sfLog.mjs';
 
 /** Masters (Account, Warehouse, then Product) run before transactions. Stable priority sort key. */
@@ -71,6 +72,11 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
             reports.push({ direction: 'ToSalesforce', objectType: 'Product', ok: true, detail: 'skipped — no Tally->SF product sync' });
             continue;
         }
+        if (cfg.objectType === 'Price') {
+            log('[runner] Price Tally->SF not supported (pricing is SF->Tally only) — skipping');
+            reports.push({ direction: 'ToSalesforce', objectType: 'Price', ok: true, detail: 'skipped — pricing is SF->Tally only' });
+            continue;
+        }
         if (cfg.objectType === 'Warehouse') {
             try {
                 const r = await syncWarehousesToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
@@ -138,6 +144,16 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
             } catch (e: any) {
                 log(`[runner] Warehouse SF->Tally errored: ${e?.message || e}`, true);
                 reports.push({ direction: 'ToTally', objectType: 'Warehouse', ok: false, detail: String(e?.message || e) });
+            }
+            continue;
+        }
+        if (cfg.objectType === 'Price') {
+            try {
+                const r = await syncPricesToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Price', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+            } catch (e: any) {
+                log(`[runner] Price SF->Tally errored: ${e?.message || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Price', ok: false, detail: String(e?.message || e) });
             }
             continue;
         }
