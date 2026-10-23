@@ -34,4 +34,34 @@ export function resolveStateCode(stateName, gstin) {
         return GST_NUM_TO_CODE[digits];
     return '';
 }
+// SF picklist code -> canonical Indian state NAME, for the Tally place-of-supply (<PLACEOFSUPPLY>),
+// which wants the full state name. Includes both code spellings SF uses across objects: the standard
+// address compound (CT/UT/DD/DN) and the Tally_Account variants (CG/UK). Keep in sync with both
+// STATE_NAME_TO_CODE above and the Full_Address__StateCode__s picklist.
+const CODE_TO_STATE_NAME = {
+    JK: 'Jammu and Kashmir', HP: 'Himachal Pradesh', PB: 'Punjab', CH: 'Chandigarh',
+    UK: 'Uttarakhand', UT: 'Uttarakhand', HR: 'Haryana', DL: 'Delhi', RJ: 'Rajasthan',
+    UP: 'Uttar Pradesh', BR: 'Bihar', SK: 'Sikkim', AR: 'Arunachal Pradesh', NL: 'Nagaland',
+    MN: 'Manipur', MZ: 'Mizoram', TR: 'Tripura', ML: 'Meghalaya', AS: 'Assam', WB: 'West Bengal',
+    JH: 'Jharkhand', OR: 'Odisha', CG: 'Chhattisgarh', CT: 'Chhattisgarh', MP: 'Madhya Pradesh',
+    GJ: 'Gujarat', DD: 'Daman and Diu', DN: 'Dadra and Nagar Haveli', MH: 'Maharashtra',
+    KA: 'Karnataka', GA: 'Goa', LD: 'Lakshadweep', KL: 'Kerala', TN: 'Tamil Nadu', PY: 'Puducherry',
+    AN: 'Andaman and Nicobar Islands', TG: 'Telangana', TS: 'Telangana', AP: 'Andhra Pradesh',
+    LA: 'Ladakh',
+};
+/** SF picklist code (e.g. 'GJ') -> canonical Indian state name (e.g. 'Gujarat'); '' if unknown. */
+export function stateNameFromCode(code) {
+    const c = String(code || '').trim().toUpperCase();
+    return CODE_TO_STATE_NAME[c] || '';
+}
+/** Normalise a state code to a canonical form so the two SF code spaces (address compound vs
+ *  Tally_Account) compare equal for intra/inter-state GST. Maps via the state name when resolvable
+ *  (so CT==CG, UT==UK, TS==TG); otherwise returns the upper-cased code unchanged. */
+export function canonStateCode(code) {
+    const c = String(code || '').trim().toUpperCase();
+    if (!c)
+        return '';
+    const name = CODE_TO_STATE_NAME[c];
+    return name ? (STATE_NAME_TO_CODE[name.toLowerCase()] || c) : c;
+}
 //# sourceMappingURL=stateCodes.mjs.map

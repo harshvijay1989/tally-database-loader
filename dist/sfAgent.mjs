@@ -3,6 +3,7 @@ import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
 import { ensureStockItem, readStockItemKeys, resolveDefaultGodown } from './tallyMaster.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
+import { stateNameFromCode, canonStateCode } from './stateCodes.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
 import { logToTrigger } from './sfLog.mjs';
 import { saveWatermark, stampRun } from './sfConfig.mjs';
@@ -61,12 +62,10 @@ function buildLines(spec, row, sapId, companyCode, itemSap) {
     const disc = splitMulti(row[`${INV}.discount`]);
     const amt = splitMulti(row[`${INV}.amount`]);
     const ledger = splitMulti(row[`${INV}.accountingallocations.list.ledgername`]);
-    // Godown/batch per line (inbound capture). NOTE: the flattener joins ALL batch-allocation values
-    // across the whole voucher under one path, so these index-align with inventory lines only when
-    // every line has exactly one allocation (the one-godown-per-line model). A mixed voucher (some
-    // lines with no allocation) would misalign; see the report's inbound caveat.
-    const godown = splitMulti(row[`${INV}.batchallocations.list.godownname`]);
-    const batch = splitMulti(row[`${INV}.batchallocations.list.batchname`]);
+    // Warehouse/godown is now a HEADER concept (Warehouse_Address__c -> Tally_Shipping_Address__c),
+    // not a per-line field, so inbound no longer captures godown onto the line. (Inbound header
+    // warehouse resolution — matching the voucher's godown name back to a warehouse address record —
+    // is a deliberate TODO; the central sales flow is SF->Tally.)
     return names.map((name, i) => {
         const q = parseQty(qty[i]);
         return {
@@ -77,16 +76,12 @@ function buildLines(spec, row, sapId, companyCode, itemSap) {
             Quantity__c: q.qty, Unit__c: q.unit,
             Rate__c: toRate(rate[i]), Discount__c: toNum(disc[i]), Amount__c: toNum(amt[i]),
             Accounting_Ledger__c: ledger[i] || '',
-            Godown__c: godown[i] || undefined, Batch__c: batch[i] || undefined,
             Line_No__c: i + 1, SAP_Id__c: sapId, SAP_Company_Code__c: companyCode,
         };
     });
 }
 /** Fields the connector always reads regardless of mapping (idempotency + watermark + traceability). */
 const SYSTEM_FETCH = ['GUID', 'ALTERID', 'VOUCHERNUMBER', 'DATE', 'VOUCHERTYPENAME'];
-// Always fetch the per-line godown/batch so inbound vouchers can capture warehouse allocation even
-// when a distributor hasn't mapped these fields (they come back flattened as `${INV}.batchallocations.list.*`).
-const INV_FETCH = ['ALLINVENTORYENTRIES.LIST.BATCHALLOCATIONS.LIST.GODOWNNAME', 'ALLINVENTORYENTRIES.LIST.BATCHALLOCATIONS.LIST.BATCHNAME'];
 /**
  * One incremental Tally->SF pass for a single object type. Reads only vouchers of the
  * spec's voucher type whose $AlterID is past the config watermark (so re-runs are cheap and
@@ -106,7 +101,7 @@ export async function syncToSalesforce(spec, config, acct, server, port, opts = 
         await logToTrigger({ operation: `Tally->SF ${spec.objectType}`, objectName: spec.stagingObject, status: 'Info', errorMessage: 'no active mappings', startedAt });
         return res;
     }
-    const fetchList = [...new Set([...SYSTEM_FETCH, ...INV_FETCH, ...maps.filter(m => m.source).map(m => m.source.toUpperCase())])].join(',');
+    const fetchList = [...new Set([...SYSTEM_FETCH, ...maps.filter(m => m.source).map(m => m.source.toUpperCase())])].join(',');
     // Incremental + type-scoped filter. Operators/quotes MUST be XML-escaped (see alterIdRangeFilter).
     const typeFilter = spec.voucherTypes.map(vt => `$VoucherTypeName = ${qstr(vt)}`).join(' OR ');
     const filter = `(${typeFilter}) AND $AlterID &gt; ${config.lastAlterId}`;
@@ -217,7 +212,7 @@ function ruleFor(objectType, logical) {
         return String(logical.noteType || '').toLowerCase().includes('debit') ? TO_TALLY_RULES.DebitNote : TO_TALLY_RULES.CreditNote;
     return TO_TALLY_RULES[objectType];
 }
-export function assembleVoucher(objectType, logical, lines, itemBySap, gst, defaultGodown = '') {
+export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extra = {}) {
     const rule = ruleFor(objectType, logical);
     if (!rule)
         return `no ToTally rule for ${objectType} (SF->Tally not supported for this type yet)`;
@@ -244,6 +239,13 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, defa
     const partySign = signIsPurchase ? 1 : -1;
     const qtySign = signIsPurchase ? 1 : -1;
     const counter = String(logical.counterLedger || (docIsPurchase ? 'Purchase' : 'Sales'));
+    // Warehouse/godown is a HEADER concept now: one warehouse per voucher applies to every stock
+    // line. Precedence: the header's Warehouse_Address__c (resolved to a Tally godown name) wins;
+    // else the company default (set only when multi-godown is enabled — Tally then REQUIRES an
+    // allocation on every line); else '' (single-location company -> no allocation, byte-identical
+    // XML). ORDER vouchers carry NO godown (no stock movement; Tally rejects an order with a batch
+    // allocation). Batch defaults to 'Primary Batch' at XML build time when a godown is present.
+    const voucherGodown = rule.order ? undefined : ((extra.headerGodown || extra.defaultGodown || '') || undefined);
     const inventoryEntries = [];
     const gstLines = [];
     let lineTotal = 0;
@@ -267,14 +269,9 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, defa
             // meaningful on a consuming voucher (not the order itself) — buildVoucherImportXml
             // drops it when isOrder.
             orderNo: ln.orderNo ? String(ln.orderNo) : (logical.orderRef ? String(logical.orderRef) : undefined),
-            // Per-line warehouse: explicit Godown__c wins; else the company default (set only when
-            // multi-godown is enabled — Tally then REQUIRES an allocation on every line); else ''
-            // (single-location company) -> buildVoucherImportXml emits no allocation (unchanged XML).
-            // ORDER vouchers get NO godown (no stock movement; Tally rejects an order with a batch
-            // allocation) — so orders stay byte-identical to pre-godown behaviour. Batch defaults to
-            // 'Primary Batch' at XML build time when a godown is present.
-            godown: rule.order ? undefined : ((ln.godown ? String(ln.godown) : (defaultGodown || '')) || undefined),
-            batch: ln.batch ? String(ln.batch) : undefined,
+            // Header warehouse applies to every line (see voucherGodown above). Batch is left to the
+            // XML builder's 'Primary Batch' default when a godown is set.
+            godown: voucherGodown,
         });
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -298,11 +295,19 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, defa
     const entries = [{ ledger: party, amount: partyAmt }, ...taxEntries];
     if (!lines.length)
         entries.push({ ledger: counter, amount: -partyAmt }); // no inventory -> plain 2-line accounting voucher
+    const shipTo = extra.shipTo;
     return {
         date: String(logical.date), voucherType, partyLedger: party,
         voucherNumber: logical.number ? String(logical.number) : undefined,
         narration: logical.narration ? String(logical.narration) : undefined,
         entries, inventoryEntries: inventoryEntries.length ? inventoryEntries : undefined,
+        // Customer ship-to (Invoice/Order only; additive — absent on other types). PLACEOFSUPPLY is
+        // the GST metadata; the actual intra/inter tax split was computed above from the same state.
+        ...(shipTo ? {
+            consigneeName: shipTo.name || undefined,
+            shipToAddress: (shipTo.lines && shipTo.lines.length) ? shipTo.lines : undefined,
+            placeOfSupply: shipTo.stateName || undefined,
+        } : {}),
         // Order vouchers need a reference (the order number) + a per-line order due date.
         ...(rule.order ? { isOrder: true, reference: logical.number ? String(logical.number) : undefined, orderDueDate: String(logical.date) } : {}),
     };
@@ -330,14 +335,14 @@ async function loadPendingLines(spec, headerIds, sapId, log) {
     const parentField = spec.lineParentRel.replace('__r', '__c'); // e.g. 'Invoice__r' -> 'Invoice__c'
     const ids = headerIds.map(i => `'${i}'`).join(',');
     try {
-        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c, Godown__c, Batch__c ` +
+        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c ` +
             `FROM ${spec.lineObject} WHERE ${parentField} IN (${ids}) ORDER BY Line_No__c NULLS LAST`);
         for (const r of rows) {
             const pid = r[parentField];
             if (!pid)
                 continue;
             const arr = out.get(pid) || [];
-            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c, godown: r.Godown__c, batch: r.Batch__c });
+            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c });
             out.set(pid, arr);
         }
     }
@@ -376,6 +381,7 @@ async function lookupVoucherGuid(server, port, spec, v) {
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally (with their line items), then write status back. */
 export async function syncToTally(spec, acct, server, port, opts = {}) {
+    var _a;
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
@@ -389,7 +395,20 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] };
     }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source))];
-    const soql = `SELECT Id, ${sourceFields.join(', ')} FROM ${spec.stagingObject} ` +
+    // Invoice/Order headers additionally carry the warehouse (ship-FROM godown) and customer ship-to
+    // address lookups to Tally_Shipping_Address__c. These are connector-fixed (not mapping-driven)
+    // and only exist on these two objects, so append them conditionally.
+    const hasAddr = spec.objectType === 'Invoice' || spec.objectType === 'Order';
+    const addrFields = hasAddr ? [
+        'Warehouse_Address__r.Name',
+        'Customer_Shipping_Address__r.Name',
+        'Customer_Shipping_Address__r.Full_Address__StateCode__s',
+        'Customer_Shipping_Address__r.Full_Address__Street__s',
+        'Customer_Shipping_Address__r.Full_Address__City__s',
+        'Customer_Shipping_Address__r.Full_Address__PostalCode__s',
+    ] : [];
+    const selectFields = [...new Set([...sourceFields, ...addrFields])];
+    const soql = `SELECT Id, ${selectFields.join(', ')} FROM ${spec.stagingObject} ` +
         `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Id__c = '${acct.sapId.replace(/'/g, "\\'")}'`;
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
@@ -438,10 +457,28 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
     const zeroRateItems = new Set();
     for (const row of rows) {
         const logical = applyMapping(row, maps);
+        // Header warehouse (ship-FROM godown) + customer ship-to, from the Tally_Shipping_Address__c
+        // lookups (Invoice/Order only). The ship-to STATE is the GST place of supply.
+        let headerGodown = '';
+        let shipTo;
+        let shipToStateCode = '';
+        if (hasAddr) {
+            headerGodown = ((_a = row.Warehouse_Address__r) === null || _a === void 0 ? void 0 : _a.Name) || '';
+            const cs = row.Customer_Shipping_Address__r;
+            if (cs) {
+                shipToStateCode = cs.Full_Address__StateCode__s || '';
+                const cityLine = [cs.Full_Address__City__s, cs.Full_Address__PostalCode__s].filter(Boolean).join(' ');
+                const lines = [cs.Full_Address__Street__s, cityLine].filter(Boolean).map((s) => String(s));
+                shipTo = { name: cs.Name || undefined, lines, stateName: stateNameFromCode(shipToStateCode) || undefined };
+            }
+        }
         let gstCtx;
         if (taxable) {
+            // Place of supply = customer ship-to state when present (Invoice/Order), else the party's
+            // billing state. Compared canonically so the two SF code spaces (CT/CG, UT/UK) still match.
             const partySt = partyStates.get(String(logical.party || '').trim().toLowerCase()) || '';
-            const intra = !distState || !partySt || distState === partySt; // default to intra when a state is unknown
+            const posState = shipToStateCode || partySt;
+            const intra = !distState || !posState || canonStateCode(distState) === canonStateCode(posState); // default to intra when a state is unknown
             gstCtx = { rateBySap, intra, cfg: gstCfg };
             for (const ln of (linesByParent.get(row.Id) || [])) {
                 const sap = String(ln.productSapId || '').trim().toLowerCase();
@@ -449,7 +486,7 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                     zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
             }
         }
-        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, defaultGodown);
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, { defaultGodown, headerGodown, shipTo });
         if (typeof built === 'string') {
             res.failed++;
             res.errors.push(`${row.Id}: ${built}`);

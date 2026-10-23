@@ -36,6 +36,11 @@ export interface VoucherInput {
     isOrder?: boolean;       // order voucher (Sales/Purchase Order): needs a reference + per-line order due date
     orderDueDate?: string;   // YYYYMMDD; defaults to the voucher date
     reference?: string;      // order/bill reference (the order number for order vouchers)
+    // Ship-to (customer delivery address, from Tally_Shipping_Address__c on Invoice/Order). All
+    // optional + additive: when absent the voucher XML is byte-identical to before.
+    consigneeName?: string;  // buyer/consignee name
+    shipToAddress?: string[];// consignee address lines
+    placeOfSupply?: string;  // state NAME for GST place of supply (drives nothing we compute; metadata)
 }
 
 export interface ImportResult { ok: boolean; created: number; altered: number; errors: number; message: string; raw: string; }
@@ -99,6 +104,14 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         + (v.reference ? `<REFERENCE>${esc(v.reference)}</REFERENCE>` : '')
         + (v.partyLedger ? `<PARTYLEDGERNAME>${esc(v.partyLedger)}</PARTYLEDGERNAME>` : '')
         + (v.narration ? `<NARRATION>${esc(v.narration)}</NARRATION>` : '')
+        // Ship-to (consignee) details — emitted only when a customer shipping address is present, so
+        // vouchers without one stay byte-identical. PLACEOFSUPPLY is GST metadata; the intra/inter
+        // tax split itself is computed by the connector from the ship-to state (sfAgent).
+        + (v.consigneeName ? `<BASICBUYERNAME>${esc(v.consigneeName)}</BASICBUYERNAME>` : '')
+        + (v.placeOfSupply ? `<PLACEOFSUPPLY>${esc(v.placeOfSupply)}</PLACEOFSUPPLY>` : '')
+        + ((v.shipToAddress && v.shipToAddress.length)
+            ? '<BASICBUYERADDRESS.LIST>' + v.shipToAddress.map(l => `<BASICBUYERADDRESS>${esc(l)}</BASICBUYERADDRESS>`).join('') + '</BASICBUYERADDRESS.LIST>'
+            : '')
         + entries
         + inventory
         + '</VOUCHER></TALLYMESSAGE></REQUESTDATA>'

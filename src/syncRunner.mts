@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import { loadSyncConfigs, resolveAccount, isDue, saveWatermark, type Direction } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally, type LogFn } from './sfAgent.mjs';
-import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncGodownsToTally, syncGodownsToSalesforce, backfillSapIdsToTally } from './sfMaster.mjs';
+import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncWarehousesToTally, syncWarehousesToSalesforce, backfillSapIdsToTally } from './sfMaster.mjs';
 import { logToTrigger } from './sfLog.mjs';
 
-/** Masters (Account, Godown, then Product) run before transactions. Stable priority sort key. */
-function masterFirst(objectType: string): number { return objectType === 'Account' ? 0 : objectType === 'Godown' ? 1 : objectType === 'Product' ? 2 : 3; }
+/** Masters (Account, Warehouse, then Product) run before transactions. Stable priority sort key. */
+function masterFirst(objectType: string): number { return objectType === 'Account' ? 0 : objectType === 'Warehouse' ? 1 : objectType === 'Product' ? 2 : 3; }
 
 // The runner is the connector's control loop. Every cycle it asks Salesforce what it is
 // allowed to do (Sync_Config__c for THIS distributor, by SAP company code) and acts ONLY on
@@ -71,14 +71,14 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
             reports.push({ direction: 'ToSalesforce', objectType: 'Product', ok: true, detail: 'skipped — no Tally->SF product sync' });
             continue;
         }
-        if (cfg.objectType === 'Godown') {
+        if (cfg.objectType === 'Warehouse') {
             try {
-                const r = await syncGodownsToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
+                const r = await syncWarehousesToSalesforce(acct, opts.server, opts.port, { sinceAlterId: cfg.lastAlterId, dryRun: opts.dryRun, log });
                 if (!opts.dryRun && r.pulled > 0) await saveWatermark(cfg.id, r.newWatermark).catch(() => { }); // progress-gated, like Account
-                reports.push({ direction: 'ToSalesforce', objectType: 'Godown', ok: r.failed === 0, detail: `scanned ${r.scanned}, pulled ${r.pulled}, failed ${r.failed}` });
+                reports.push({ direction: 'ToSalesforce', objectType: 'Warehouse', ok: r.failed === 0, detail: `scanned ${r.scanned}, pulled ${r.pulled}, failed ${r.failed}` });
             } catch (e: any) {
-                log(`[runner] Godown Tally->SF errored: ${e?.message || e}`, true);
-                reports.push({ direction: 'ToSalesforce', objectType: 'Godown', ok: false, detail: String(e?.message || e) });
+                log(`[runner] Warehouse Tally->SF errored: ${e?.message || e}`, true);
+                reports.push({ direction: 'ToSalesforce', objectType: 'Warehouse', ok: false, detail: String(e?.message || e) });
             }
             continue;
         }
@@ -131,13 +131,13 @@ export async function runCycle(opts: RunnerOptions): Promise<CycleReport[]> {
             }
             continue;
         }
-        if (cfg.objectType === 'Godown') {
+        if (cfg.objectType === 'Warehouse') {
             try {
-                const r = await syncGodownsToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
-                reports.push({ direction: 'ToTally', objectType: 'Godown', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+                const r = await syncWarehousesToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'Warehouse', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
             } catch (e: any) {
-                log(`[runner] Godown SF->Tally errored: ${e?.message || e}`, true);
-                reports.push({ direction: 'ToTally', objectType: 'Godown', ok: false, detail: String(e?.message || e) });
+                log(`[runner] Warehouse SF->Tally errored: ${e?.message || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'Warehouse', ok: false, detail: String(e?.message || e) });
             }
             continue;
         }

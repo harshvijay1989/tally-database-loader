@@ -25,7 +25,8 @@ const DEFAULT_MATRIX = [
     { objectType: 'PurchaseOrder', direction: 'ToTally' },
     { objectType: 'Account', direction: 'Both' },
     { objectType: 'Product', direction: 'ToTally' },
-    { objectType: 'Godown', direction: 'Both' }
+    { objectType: 'Warehouse', direction: 'Both' },
+    { objectType: 'Price', direction: 'ToTally' }
 ];
 
 const DIST_COLUMNS = [

@@ -83,45 +83,55 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
     return res;
 }
 
-/** OUTBOUND (SF -> Tally) GODOWN master: push rows tagged Sync_Status__c='To Tally' to Tally as
- *  godowns, then copy the real Tally GUID back. GUID-first identity (via upsertGodown) avoids
- *  duplicates on rename. Godowns have no SAP Id — identity is GUID + name only. */
-export async function syncGodownsToTally(acct: AccountRef, server: string, port: number,
+// A distributor's own warehouses (= Tally godowns / stock locations) are modelled in the org on
+// Tally_Shipping_Address__c with Address_Type__c = WAREHOUSE_ADDR_TYPE. (The same object also holds
+// customer ship-to rows, Address_Type__c='Shipping', which are consumed at voucher time — see
+// sfAgent — and are NOT Tally masters.) The Tally-side godown machinery (upsertGodown/readGodownKeys
+// in tallyMaster) is unchanged; only the Salesforce object this reads/writes changed from our old
+// Tally_Godown__c to Tally_Shipping_Address__c.
+export const WAREHOUSE_ADDR_TYPE = 'Warehouse';
+
+/** OUTBOUND (SF -> Tally) WAREHOUSE master: push warehouse-type Tally_Shipping_Address__c rows
+ *  tagged Sync_Status__c='To Tally' to Tally as godowns, then copy the real Tally GUID back.
+ *  GUID-first identity (via upsertGodown) avoids duplicates on rename. No SAP Id — identity is
+ *  GUID + name only. Godowns have no address in Tally, so only the Name is sent. */
+export async function syncWarehousesToTally(acct: AccountRef, server: string, port: number,
     opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
     const rows = await sfQuery(
-        `SELECT Id, Name, Tally_Guid__c, Parent__c ` +
-        `FROM Tally_Godown__c ` +
-        `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
+        `SELECT Id, Name, Tally_Guid__c ` +
+        `FROM Tally_Shipping_Address__c ` +
+        `WHERE Account__c = '${esc(acct.id)}' AND Address_Type__c = '${WAREHOUSE_ADDR_TYPE}' ` +
+        `AND Sync_Status__c = 'To Tally' ` +
         `ORDER BY Name`);
     res.scanned = rows.length;
     for (const r of rows) {
         const name: string = r.Name;
-        const parent: string = r.Parent__c || '';
         const knownGuid: string = r.Tally_Guid__c || '';
-        if (opts.dryRun) { log(`[dry-run] would push godown '${name}' (parent='${parent}', guid='${knownGuid}')`); continue; }
+        if (opts.dryRun) { log(`[dry-run] would push warehouse/godown '${name}' (guid='${knownGuid}')`); continue; }
         try {
-            const w = await upsertGodown(server, port, name, parent, { knownGuid: knownGuid || undefined, log });
-            if (!w.ok) { res.failed++; res.errors.push(`${name}: ${w.message}`); await logTrigger('SF->Tally Godown', 'Error', 'Tally_Godown__c', r.Id, w.message); continue; }
+            const w = await upsertGodown(server, port, name, '', { knownGuid: knownGuid || undefined, log });
+            if (!w.ok) { res.failed++; res.errors.push(`${name}: ${w.message}`); await logTrigger('SF->Tally Warehouse', 'Error', 'Tally_Shipping_Address__c', r.Id, w.message); continue; }
             res.pushed++;
             if (w.guid && w.guid !== knownGuid) {
-                await sfUpdate('Tally_Godown__c', r.Id, { Tally_Guid__c: w.guid });
-                log(`  godown '${name}' -> GUID ${w.guid} written back to SF`);
+                await sfUpdate('Tally_Shipping_Address__c', r.Id, { Tally_Guid__c: w.guid });
+                log(`  warehouse '${name}' -> GUID ${w.guid} written back to SF`);
             }
-            await logTrigger('SF->Tally Godown', 'Success', 'Tally_Godown__c', r.Id, `guid=${w.guid || ''}`);
+            await logTrigger('SF->Tally Warehouse', 'Success', 'Tally_Shipping_Address__c', r.Id, `guid=${w.guid || ''}`);
         } catch (e: any) {
             res.failed++; res.errors.push(`${name}: ${e.message}`);
-            await logTrigger('SF->Tally Godown', 'Error', 'Tally_Godown__c', r.Id, e.message);
+            await logTrigger('SF->Tally Warehouse', 'Error', 'Tally_Shipping_Address__c', r.Id, e.message);
         }
     }
-    log(`SF->Tally godowns: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
+    log(`SF->Tally warehouses: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
     return res;
 }
 
-/** INBOUND (Tally -> SF) GODOWN master: read ALL godowns (no SAP filter), incremental by AlterID,
- *  and upsert Tally_Godown__c by GUID. Mirrors syncAccountsToSalesforce; returns the new watermark. */
-export async function syncGodownsToSalesforce(acct: AccountRef, server: string, port: number,
+/** INBOUND (Tally -> SF) WAREHOUSE master: read ALL godowns (no SAP filter), incremental by AlterID,
+ *  and upsert Tally_Shipping_Address__c (Address_Type__c='Warehouse', Account__c=distributor) by
+ *  GUID. Mirrors syncAccountsToSalesforce; returns the new watermark. */
+export async function syncWarehousesToSalesforce(acct: AccountRef, server: string, port: number,
     opts: { log?: LogFn; dryRun?: boolean; sinceAlterId?: number } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: opts.sinceAlterId || 0, errors: [] };
@@ -129,26 +139,26 @@ export async function syncGodownsToSalesforce(acct: AccountRef, server: string, 
     const scoped = keys.filter(k => k.name && k.guid);
     res.scanned = scoped.length;
     res.newWatermark = scoped.reduce((mx, k) => Math.max(mx, k.alterId || 0), opts.sinceAlterId || 0);
-    if (!scoped.length) { log('Tally->SF godowns: nothing in scope'); return res; }
-    if (opts.dryRun) { scoped.forEach(k => log(`[dry-run] would upsert Tally_Godown__c name='${k.name}' guid=${k.guid}`)); return res; }
+    if (!scoped.length) { log('Tally->SF warehouses: nothing in scope'); return res; }
+    if (opts.dryRun) { scoped.forEach(k => log(`[dry-run] would upsert Tally_Shipping_Address__c (Warehouse) name='${k.name}' guid=${k.guid}`)); return res; }
     const records = scoped.map(k => ({
         Tally_Guid__c: k.guid,
         Name: k.name.slice(0, 80),
-        Parent__c: k.parent || undefined,
-        Distributor__c: acct.id,
+        Account__c: acct.id,
+        Address_Type__c: WAREHOUSE_ADDR_TYPE,
         Sync_Status__c: 'From Tally',
     }));
     try {
-        const r = await sfUpsert('Tally_Godown__c', 'Tally_Guid__c', records, log);
+        const r = await sfUpsert('Tally_Shipping_Address__c', 'Tally_Guid__c', records, log);
         res.pulled = r.success;
         res.failed = r.failed;
         if (r.errors?.length) res.errors.push(...r.errors);
-        await logTrigger('Tally->SF Godown', res.failed ? 'Partial' : 'Success', 'Tally_Godown__c', acct.id, `pulled=${res.pulled} failed=${res.failed}`);
+        await logTrigger('Tally->SF Warehouse', res.failed ? 'Partial' : 'Success', 'Tally_Shipping_Address__c', acct.id, `pulled=${res.pulled} failed=${res.failed}`);
     } catch (e: any) {
         res.failed = records.length; res.errors.push(e.message);
-        await logTrigger('Tally->SF Godown', 'Error', 'Tally_Godown__c', acct.id, e.message);
+        await logTrigger('Tally->SF Warehouse', 'Error', 'Tally_Shipping_Address__c', acct.id, e.message);
     }
-    log(`Tally->SF godowns: scanned=${res.scanned} pulled=${res.pulled} failed=${res.failed} newWatermark=${res.newWatermark}`);
+    log(`Tally->SF warehouses: scanned=${res.scanned} pulled=${res.pulled} failed=${res.failed} newWatermark=${res.newWatermark}`);
     return res;
 }
 

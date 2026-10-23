@@ -64,6 +64,14 @@ export function buildVoucherImportXml(v, action = 'Create') {
         + (v.reference ? `<REFERENCE>${esc(v.reference)}</REFERENCE>` : '')
         + (v.partyLedger ? `<PARTYLEDGERNAME>${esc(v.partyLedger)}</PARTYLEDGERNAME>` : '')
         + (v.narration ? `<NARRATION>${esc(v.narration)}</NARRATION>` : '')
+        // Ship-to (consignee) details — emitted only when a customer shipping address is present, so
+        // vouchers without one stay byte-identical. PLACEOFSUPPLY is GST metadata; the intra/inter
+        // tax split itself is computed by the connector from the ship-to state (sfAgent).
+        + (v.consigneeName ? `<BASICBUYERNAME>${esc(v.consigneeName)}</BASICBUYERNAME>` : '')
+        + (v.placeOfSupply ? `<PLACEOFSUPPLY>${esc(v.placeOfSupply)}</PLACEOFSUPPLY>` : '')
+        + ((v.shipToAddress && v.shipToAddress.length)
+            ? '<BASICBUYERADDRESS.LIST>' + v.shipToAddress.map(l => `<BASICBUYERADDRESS>${esc(l)}</BASICBUYERADDRESS>`).join('') + '</BASICBUYERADDRESS.LIST>'
+            : '')
         + entries
         + inventory
         + '</VOUCHER></TALLYMESSAGE></REQUESTDATA>'
