@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Sales_Order_Number__c</fullName>
+    <label>Sales Order Number</label>
+    <length>80</length>
+    <type>Text</type>
+    <externalId>true</externalId>
+    <unique>false</unique>
+    <required>false</required>
+    <description>Tally sales order number for this order, matched/stamped by org automation from the Tally_Order__c staging record.</description>
+</CustomField>

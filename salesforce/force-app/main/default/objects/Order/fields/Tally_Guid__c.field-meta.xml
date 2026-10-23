@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Tally_Guid__c</fullName>
+    <label>Tally GUID</label>
+    <length>80</length>
+    <type>Text</type>
+    <externalId>true</externalId>
+    <unique>false</unique>
+    <required>false</required>
+    <description>Permanent Tally voucher GUID for this sales order, carried over from the Tally_Order__c staging record by org automation. Confirmed required by the Tally_Order__c after-insert automation (queries Order.Tally_Guid__c).</description>
+</CustomField>
