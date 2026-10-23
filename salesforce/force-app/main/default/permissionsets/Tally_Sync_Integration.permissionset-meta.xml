@@ -1213,6 +1213,11 @@
         <editable>true</editable>
     </fieldPermissions>
     <fieldPermissions>
+        <field>Tally_Purchase__c.Warehouse_Address__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
         <field>Tally_Order__c.SAP_Id__c</field>
         <readable>true</readable>
         <editable>true</editable>

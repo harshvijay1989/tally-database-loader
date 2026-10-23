@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Warehouse_Address__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <description>The distributor godown the purchased goods are received INTO. The connector posts the purchase inventory to this warehouse&apos;s Tally godown.</description>
+    <inlineHelpText>Distributor warehouse/godown this purchase is received into.</inlineHelpText>
+    <label>Warehouse Address</label>
+    <referenceTo>Tally_Shipping_Address__c</referenceTo>
+    <relationshipLabel>Tally Purchases (Warehouse)</relationshipLabel>
+    <relationshipName>Tally_Purchases_Warehouse</relationshipName>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>Lookup</type>
+</CustomField>

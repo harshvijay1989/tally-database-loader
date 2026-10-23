@@ -431,18 +431,22 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const maps = await loadMappings(spec.objectType, 'ToTally', acct.sapId);
     if (!maps.length) { log(`[agent] no active ToTally mappings for ${spec.objectType} — nothing to do`, true); return { pending: 0, created: 0, failed: 0, errors: ['no mappings'] }; }
     const sourceFields = [...new Set(maps.filter(m => m.source).map(m => m.source!))];
-    // Invoice/Order headers additionally carry the warehouse (ship-FROM godown) and customer ship-to
-    // address lookups to Tally_Shipping_Address__c. These are connector-fixed (not mapping-driven)
-    // and only exist on these two objects, so append them conditionally.
-    const hasAddr = spec.objectType === 'Invoice' || spec.objectType === 'Order';
-    const addrFields = hasAddr ? [
-        'Warehouse_Address__r.Name',
-        'Customer_Shipping_Address__r.Name',
-        'Customer_Shipping_Address__r.Full_Address__StateCode__s',
-        'Customer_Shipping_Address__r.Full_Address__Street__s',
-        'Customer_Shipping_Address__r.Full_Address__City__s',
-        'Customer_Shipping_Address__r.Full_Address__PostalCode__s',
-    ] : [];
+    // Headers carry a warehouse (godown) and/or customer ship-to lookup to Tally_Shipping_Address__c.
+    // These are connector-fixed (not mapping-driven). Warehouse exists on Invoice, Order AND Purchase
+    // (where it's the godown stock is received INTO); the customer ship-to exists only on the sales
+    // side (Invoice/Order). Append whichever apply so the SOQL never references an absent field.
+    const hasWarehouse = spec.objectType === 'Invoice' || spec.objectType === 'Order' || spec.objectType === 'Purchase';
+    const hasShipTo = spec.objectType === 'Invoice' || spec.objectType === 'Order';
+    const addrFields = [
+        ...(hasWarehouse ? ['Warehouse_Address__r.Name'] : []),
+        ...(hasShipTo ? [
+            'Customer_Shipping_Address__r.Name',
+            'Customer_Shipping_Address__r.Full_Address__StateCode__s',
+            'Customer_Shipping_Address__r.Full_Address__Street__s',
+            'Customer_Shipping_Address__r.Full_Address__City__s',
+            'Customer_Shipping_Address__r.Full_Address__PostalCode__s',
+        ] : []),
+    ];
     const selectFields = [...new Set([...sourceFields, ...addrFields])];
     const soql = `SELECT Id, ${selectFields.join(', ')} FROM ${spec.stagingObject} ` +
         `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Id__c = '${acct.sapId.replace(/'/g, "\\'")}'`;
@@ -489,11 +493,11 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const zeroRateItems = new Set<string>();
     for (const row of rows) {
         const logical = applyMapping(row, maps);
-        // Header warehouse (ship-FROM godown) + customer ship-to, from the Tally_Shipping_Address__c
-        // lookups (Invoice/Order only). The ship-to STATE is the GST place of supply.
+        // Header warehouse (Invoice/Order ship-FROM, Purchase receive-INTO) + customer ship-to
+        // (sales only), from the Tally_Shipping_Address__c lookups. Ship-to STATE = GST place of supply.
         let headerGodown = ''; let shipTo: ShipTo | undefined; let shipToStateCode = '';
-        if (hasAddr) {
-            headerGodown = row.Warehouse_Address__r?.Name || '';
+        if (hasWarehouse) headerGodown = row.Warehouse_Address__r?.Name || '';
+        if (hasShipTo) {
             const cs = row.Customer_Shipping_Address__r;
             if (cs) {
                 shipToStateCode = cs.Full_Address__StateCode__s || '';
