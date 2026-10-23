@@ -1,6 +1,6 @@
 import { sfQuery, sfUpdate, sfInsert } from './sfClient.mjs';
 import { AccountRef } from './sfConfig.mjs';
-import { ensurePriceLevel, setLedgerPriceLevel, upsertStockItemPrice } from './tallyPrice.mjs';
+import { ensurePriceLevel, setLedgerPriceLevel, upsertStockItemPrice, currentCompanyName } from './tallyPrice.mjs';
 
 // PRICING bridge (SF -> Tally only). Pricing is mastered in Salesforce on Tally_Price__c
 // (Direction__c = ToTally only) and pushed into each distributor's Tally as price lists. One row =
@@ -78,6 +78,10 @@ export async function syncPricesToTally(acct: AccountRef, server: string, port: 
         }
     }
 
+    // Resolve the active company name ONCE (needed as a literal to create price levels).
+    const company = await currentCompanyName(server, port);
+    if (!company) log('SF->Tally prices: WARNING — could not resolve current company name; price-level creation may fail', true);
+
     // A price level per customer only needs to be ensured + assigned to the ledger once per run.
     const levelReady = new Set<string>();
 
@@ -104,7 +108,7 @@ export async function syncPricesToTally(acct: AccountRef, server: string, port: 
         }
         try {
             if (!levelReady.has(level)) {
-                const lv = await ensurePriceLevel(server, port, level, log);
+                const lv = await ensurePriceLevel(server, port, level, company, log);
                 if (!lv.ok) { await fail(`price level '${level}': ${lv.message}`); continue; }
                 const al = await setLedgerPriceLevel(server, port, ledger, level, log);
                 if (!al.ok) { await fail(`assign price level to ledger '${ledger}': ${al.message}`); continue; }

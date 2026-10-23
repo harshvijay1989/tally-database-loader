@@ -48,7 +48,8 @@ Retire our `Tally_Godown__c`; use the org's objects. Verified live against `mord
 
 ## UAT readiness
 Connector is **regression-clean**. Gates before a full UAT (ORG-SIDE, not connector):
-- **Broken org Flow `tmpVar1`** blocks `Tally_Invoice__c` AND `Tally_Order__c` inserts in QA (`FIELD_CUSTOM_VALIDATION_EXCEPTION: Automation error: Variable does not exist: tmpVar1`). Candidate flows: Invoice_Created_Notification_Flow / Create_Credit_Debit_Note_From_Invoice / Order_Invoice_Status_Flow (none literally contain tmpVar1 — likely a formula/other flow). MUST be fixed org-side; blocks sales + order-inbound legs.
+- ~~Broken org Flow `tmpVar1`~~ **RESOLVED (2026-10-23):** probe inserts of `Tally_Invoice__c` AND `Tally_Order__c` now succeed in BOTH orgs (dev `morde` + QA `mordeqa`); no flow/validation rule in either org references `tmpVar1` anymore. Sales leg unblocked.
+- **Phase 1/2 metadata DEPLOYED to both orgs (2026-10-23):** 250 components each, clean. Connector run-as user = **Harsh Vijay (harsh@crmlanding.in.qa / .dev), System Administrator** → already has full access to `Tally_Shipping_Address__c` + `Tally_Price__c` (no perm-set additions needed). Tally up (TallyPrime), company "Harsh Vijay" FY2017-18, **MultiGodown=Yes**.
 - Org automation must **stamp `SAP_Id__c`** on To-Tally staging rows (identity dependency).
 - Duplicate inbound line (null `Tally_Line_Key__c`) = org automation on header insert.
 - Enable State picklist codes needed (TG/TS not enabled; GJ/KA/DL/TN/UP/RJ/WB/AP/MH are). Multiple Godowns (F11) per distributor if godown kept.

@@ -1,5 +1,18 @@
 import { postTallyXml } from './tallyLive.mjs';
 
+/** The active company's name (needed as a literal in a COMPANY-master alter — Tally does NOT
+ *  substitute ##SVCurrentCompany inside an import's NAME attribute). '' if it can't be read. */
+export async function currentCompanyName(server: string, port: number): Promise<string> {
+    try {
+        const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeCurCo</ID></HEADER>'
+            + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>'
+            + '<TDL><TDLMESSAGE><COLLECTION NAME="MordeCurCo" ISMODIFY="No" ISINITIALIZE="Yes"><TYPE>Company</TYPE><FILTER>cf</FILTER><NATIVEMETHOD>Name</NATIVEMETHOD></COLLECTION>'
+            + '<SYSTEM TYPE="Formula" NAME="cf">$$IsEqual:$Name:##SVCurrentCompany</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+        const r = await postTallyXml(server, port, xml, 15000);
+        return (r.match(/<NAME TYPE="String">([^<]*)<\/NAME>/i) || [])[1]?.trim() || '';
+    } catch { return ''; }
+}
+
 // Tally WRITE path for PRICING (SF -> Tally only; Tally_Price__c.Direction__c is ToTally only).
 //
 // Per-customer pricing in Tally is modelled with PRICE LEVELS: a price level is defined on the
@@ -38,14 +51,18 @@ export interface StockPriceEntry {
 }
 
 /** Ensure a PRICE LEVEL exists on the active company (idempotent create; Tally ignores a duplicate).
- *  Price levels live on the company's price-level list; we add one by name. */
-export async function ensurePriceLevel(server: string, port: number, level: string,
+ *  Price levels live on the company's price-level list; we add one by name. The company must be
+ *  named by its LITERAL name — ##SVCurrentCompany is not substituted inside an import NAME attribute
+ *  (Tally rejects it as "Company Name has no meaningful characters"). */
+export async function ensurePriceLevel(server: string, port: number, level: string, companyName: string,
     log?: (m: string, e?: boolean) => void): Promise<PriceWriteResult> {
     if (!level) return { ok: false, message: 'empty price level name' };
+    if (!companyName) return { ok: false, message: 'company name not resolved (needed to create a price level)' };
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
-        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME>'
+        + `<STATICVARIABLES><SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC>`
         + '<REQUESTDATA><TALLYMESSAGE>'
-        + '<COMPANY NAME="##SVCurrentCompany" ACTION="Alter">'
+        + `<COMPANY NAME="${esc(companyName)}" ACTION="Alter">`
         + `<PRICELEVELLIST.LIST><PRICELEVEL>${esc(level)}</PRICELEVEL></PRICELEVELLIST.LIST>`
         + '</COMPANY>'
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';

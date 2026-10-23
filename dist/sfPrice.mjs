@@ -1,5 +1,5 @@
 import { sfQuery, sfUpdate, sfInsert } from './sfClient.mjs';
-import { ensurePriceLevel, setLedgerPriceLevel, upsertStockItemPrice } from './tallyPrice.mjs';
+import { ensurePriceLevel, setLedgerPriceLevel, upsertStockItemPrice, currentCompanyName } from './tallyPrice.mjs';
 function esc(s) { return (s == null ? '' : String(s)).replace(/'/g, "\\'"); }
 /** Tally_Price__c.Start_Date__c (ISO 'YYYY-MM-DD' or Date) -> Tally 'YYYYMMDD'. '' when unparseable. */
 function toTallyDate(v) {
@@ -58,6 +58,10 @@ export async function syncPricesToTally(acct, server, port, opts = {}) {
                 itemByProduct.set(pid, { name: r.Name, unit: r.BaseUOM__c || '' });
         }
     }
+    // Resolve the active company name ONCE (needed as a literal to create price levels).
+    const company = await currentCompanyName(server, port);
+    if (!company)
+        log('SF->Tally prices: WARNING — could not resolve current company name; price-level creation may fail', true);
     // A price level per customer only needs to be ensured + assigned to the ledger once per run.
     const levelReady = new Set();
     for (const r of rows) {
@@ -91,7 +95,7 @@ export async function syncPricesToTally(acct, server, port, opts = {}) {
         }
         try {
             if (!levelReady.has(level)) {
-                const lv = await ensurePriceLevel(server, port, level, log);
+                const lv = await ensurePriceLevel(server, port, level, company, log);
                 if (!lv.ok) {
                     await fail(`price level '${level}': ${lv.message}`);
                     continue;
