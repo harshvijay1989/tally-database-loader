@@ -288,10 +288,18 @@ export async function unitExists(server: string, port: number, symbol: string): 
     return false;
 }
 
+/** Tally simple-unit symbols reject spaces and slashes (a descriptive UOM like "Carton Box" or a
+ *  symbol like "C/B" fails as "BAD UNIT NAME"). Reduce any UOM to a Tally-valid alphanumeric symbol
+ *  (letters/digits/%); used for BOTH the unit master and a stock item's base unit so they always
+ *  match. Empty -> 'Nos'. "Carton Box" -> "CartonBox", "C/B" -> "CB", "KG" -> "KG". */
+export function tallyUnitSymbol(s: string): string {
+    return ((s || '').trim().replace(/[^A-Za-z0-9%]+/g, '')) || 'Nos';
+}
+
 /** Ensure a simple unit of measure exists in Tally (create if missing). The create uses a plain
  *  <NAME> (a NAME.LIST is rejected as "BAD UNIT NAME" for units). */
 export async function ensureUnit(server: string, port: number, symbol: string, log?: (m: string, e?: boolean) => void): Promise<boolean> {
-    const unit = (symbol || '').trim();
+    const unit = tallyUnitSymbol(symbol);
     if (!unit) return false;
     if (await unitExists(server, port, unit)) return true;
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
@@ -378,7 +386,9 @@ export async function upsertStockItemWithSapId(
     opts: { knownGuid?: string; stockGroup?: string; gstRate?: number; hsn?: string; log?: (m: string, e?: boolean) => void } = {},
 ): Promise<MasterWriteResult> {
     const log = opts.log || (() => { });
-    const unit = (baseUnit || 'Nos').trim();
+    // Sanitize once so the unit master (ensureUnit) and this item's <BASEUNITS> use the identical
+    // Tally-valid symbol — a raw "Carton Box"/"C/B" would fail unit creation with BAD UNIT NAME.
+    const unit = tallyUnitSymbol(baseUnit || 'Nos');
     await ensureUnit(server, port, unit, log);
 
     let currentName = '';

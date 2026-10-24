@@ -310,7 +310,7 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extr
             placeOfSupply: shipTo.stateName || undefined,
         } : {}),
         // Order vouchers need a reference (the order number) + a per-line order due date.
-        ...(rule.order ? { isOrder: true, reference: logical.number ? String(logical.number) : undefined, orderDueDate: String(logical.date) } : {}),
+        ...(rule.order ? { isOrder: true, reference: (logical.number ? String(logical.number) : (extra.orderRef || undefined)), orderDueDate: String(logical.date) } : {}),
     };
 }
 /** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
@@ -542,7 +542,12 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             'Customer_Shipping_Address__r.Full_Address__PostalCode__s',
         ] : []),
     ];
-    const selectFields = [...new Set([...sourceFields, ...addrFields])];
+    // Order vouchers REQUIRE a non-empty voucher <REFERENCE>; Tally rejects an order without one
+    // as "Bad Order Number in Voucher!". The mapped `number` is frequently blank, so always fetch a
+    // fallback order identifier — the Tally order number (Order object), else the record Name.
+    const orderRefFields = (spec.objectType === 'Order' || spec.objectType === 'PurchaseOrder')
+        ? ['Name', ...(spec.objectType === 'Order' ? ['Order_Number__c'] : [])] : [];
+    const selectFields = [...new Set([...sourceFields, ...addrFields, ...orderRefFields])];
     // Distributor scoping by SAP_Id__c. The org stamps a COMPOSITE SAP id on each staging row —
     // '<distributorSAP>-<recordNo>' (e.g. '100273-00020961', '100273-INV-0000020638') — so the
     // distributor is the PREFIX before the first dash, not the whole value. Match the bare id (rows
@@ -629,7 +634,8 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                     zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
             }
         }
-        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, { defaultGodown, headerGodown, shipTo });
+        const orderRef = String(row.Order_Number__c || row.Name || '').trim();
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, { defaultGodown, headerGodown, shipTo, orderRef });
         if (typeof built === 'string') {
             res.failed++;
             res.errors.push(`${row.Id}: ${built}`);

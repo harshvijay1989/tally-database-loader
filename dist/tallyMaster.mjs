@@ -291,10 +291,17 @@ export async function unitExists(server, port, symbol) {
     catch { /* treat as absent */ }
     return false;
 }
+/** Tally simple-unit symbols reject spaces and slashes (a descriptive UOM like "Carton Box" or a
+ *  symbol like "C/B" fails as "BAD UNIT NAME"). Reduce any UOM to a Tally-valid alphanumeric symbol
+ *  (letters/digits/%); used for BOTH the unit master and a stock item's base unit so they always
+ *  match. Empty -> 'Nos'. "Carton Box" -> "CartonBox", "C/B" -> "CB", "KG" -> "KG". */
+export function tallyUnitSymbol(s) {
+    return ((s || '').trim().replace(/[^A-Za-z0-9%]+/g, '')) || 'Nos';
+}
 /** Ensure a simple unit of measure exists in Tally (create if missing). The create uses a plain
  *  <NAME> (a NAME.LIST is rejected as "BAD UNIT NAME" for units). */
 export async function ensureUnit(server, port, symbol, log) {
-    const unit = (symbol || '').trim();
+    const unit = tallyUnitSymbol(symbol);
     if (!unit)
         return false;
     if (await unitExists(server, port, unit))
@@ -382,7 +389,9 @@ function gstDetailsXml(gstRate, hsn) {
 export async function upsertStockItemWithSapId(server, port, name, baseUnit, sapId, opts = {}) {
     var _a;
     const log = opts.log || (() => { });
-    const unit = (baseUnit || 'Nos').trim();
+    // Sanitize once so the unit master (ensureUnit) and this item's <BASEUNITS> use the identical
+    // Tally-valid symbol — a raw "Carton Box"/"C/B" would fail unit creation with BAD UNIT NAME.
+    const unit = tallyUnitSymbol(baseUnit || 'Nos');
     await ensureUnit(server, port, unit, log);
     let currentName = '';
     if (opts.knownGuid)

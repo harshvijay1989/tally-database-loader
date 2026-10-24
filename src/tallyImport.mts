@@ -1,4 +1,5 @@
 import { postTallyXml, buildFetchXmlFiltered, nameFilter, parseCollection } from './tallyLive.mjs';
+import { tallyUnitSymbol } from './tallyMaster.mjs';
 
 // Tally WRITE path (SF -> Tally) — creates/alters vouchers via an Import Data request over
 // the same UTF-16LE gateway (docs/salesforce-agent-plan.md). This MODIFIES accounting data,
@@ -67,13 +68,13 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         '<ALLINVENTORYENTRIES.LIST>'
         + `<STOCKITEMNAME>${esc(i.stockItem)}</STOCKITEMNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
-        + `<RATE>${i.rate.toFixed(2)}/${esc(i.unit)}</RATE>`
+        + `<RATE>${i.rate.toFixed(2)}/${esc(tallyUnitSymbol(i.unit))}</RATE>`
         + `<AMOUNT>${i.amount.toFixed(2)}</AMOUNT>`
         // Quantity is always the POSITIVE magnitude; Tally takes direction (inward/outward) from
         // ISDEEMEDPOSITIVE (Yes = in / purchase, No = out / sale). A signed qty double-flips it and
         // a sale would wrongly ADD stock.
-        + `<ACTUALQTY>${Math.abs(i.qty).toFixed(2)} ${esc(i.unit)}</ACTUALQTY>`
-        + `<BILLEDQTY>${Math.abs(i.qty).toFixed(2)} ${esc(i.unit)}</BILLEDQTY>`
+        + `<ACTUALQTY>${Math.abs(i.qty).toFixed(2)} ${esc(tallyUnitSymbol(i.unit))}</ACTUALQTY>`
+        + `<BILLEDQTY>${Math.abs(i.qty).toFixed(2)} ${esc(tallyUnitSymbol(i.unit))}</BILLEDQTY>`
         // Order vouchers add the line's order due date; accounting allocations stay in both cases.
         + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
         // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
@@ -85,7 +86,7 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         // Purchase Order) are commitments with no stock movement — Tally REJECTS an order carrying a
         // BATCHALLOCATIONS block, so orders must never emit one. One godown per line -> the single
         // allocation carries the full line amount/qty.
-        + ((!v.isOrder && i.godown) ? '<BATCHALLOCATIONS.LIST><GODOWNNAME>' + esc(i.godown) + '</GODOWNNAME><BATCHNAME>' + esc(i.batch || 'Primary Batch') + '</BATCHNAME><AMOUNT>' + i.amount.toFixed(2) + '</AMOUNT><ACTUALQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</ACTUALQTY><BILLEDQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(i.unit) + '</BILLEDQTY></BATCHALLOCATIONS.LIST>' : '')
+        + ((!v.isOrder && i.godown) ? '<BATCHALLOCATIONS.LIST><GODOWNNAME>' + esc(i.godown) + '</GODOWNNAME><BATCHNAME>' + esc(i.batch || 'Primary Batch') + '</BATCHNAME><AMOUNT>' + i.amount.toFixed(2) + '</AMOUNT><ACTUALQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(tallyUnitSymbol(i.unit)) + '</ACTUALQTY><BILLEDQTY>' + Math.abs(i.qty).toFixed(2) + ' ' + esc(tallyUnitSymbol(i.unit)) + '</BILLEDQTY></BATCHALLOCATIONS.LIST>' : '')
         + '<ACCOUNTINGALLOCATIONS.LIST>'
         + `<LEDGERNAME>${esc(i.accountingLedger)}</LEDGERNAME>`
         + `<ISDEEMEDPOSITIVE>${i.amount < 0 ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`
