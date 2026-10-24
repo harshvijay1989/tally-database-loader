@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
-import { sfQuery, sfUpdate, sfUpsert } from './sfClient.mjs';
+import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { ensureStockItem, readStockItemKeys, resolveDefaultGodown } from './tallyMaster.mjs';
+import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId } from './tallyMaster.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { stateNameFromCode, canonStateCode } from './stateCodes.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
@@ -272,6 +272,7 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extr
             // Header warehouse applies to every line (see voucherGodown above). Batch is left to the
             // XML builder's 'Primary Batch' default when a godown is set.
             godown: voucherGodown,
+            productSapId: ln.productSapId ? String(ln.productSapId) : undefined, // for the safety-net native-Product2 fallback
         });
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -378,6 +379,136 @@ async function lookupVoucherGuid(server, port, spec, v) {
         return '';
     }
 }
+const soqlEsc = (s) => String(s == null ? '' : s).replace(/'/g, "\\'");
+/** Ensure a voucher's PARTY LEDGER exists in Tally — richly. Instead of a bare shell, look up the
+ *  party's Salesforce bridge row (Tally_Account__c, which the org's trigger populates from the native
+ *  Account) and create the ledger with its SAP Id + real Account Group, writing the Tally GUID back.
+ *  Falls back to a bare ledger only when there is no bridge row. Returns '' on success, else an error. */
+async function ensurePartyLedgerRich(acct, server, port, partyName, fallbackGroup, log) {
+    try {
+        const rows = await sfQuery(`SELECT Id, SAP_ID__c, Account_Group__c, Tally_Guid__c FROM Tally_Account__c ` +
+            `WHERE Distributor__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(partyName)}' LIMIT 1`);
+        const r = rows[0];
+        if (r && r.SAP_ID__c) {
+            const w = await upsertLedgerWithSapId(server, port, partyName, r.Account_Group__c || fallbackGroup, r.SAP_ID__c, { knownGuid: r.Tally_Guid__c || undefined, log });
+            if (w.ok) {
+                log(`  party ledger '${partyName}' created from SF (sap=${r.SAP_ID__c}, group=${r.Account_Group__c || fallbackGroup})`);
+                if (w.guid && w.guid !== r.Tally_Guid__c)
+                    await sfUpdate('Tally_Account__c', r.Id, { Tally_Guid__c: w.guid }).catch(() => { });
+                return '';
+            }
+            log(`  party ledger '${partyName}' rich-create failed (${w.message}) — trying native Account`, true);
+        }
+    }
+    catch (e) {
+        log(`  party ledger Tally_Account lookup failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}; trying native Account`, true);
+    }
+    // No Tally_Account__c yet — read the native customer Account directly (it already carries the
+    // org-generated customer SAP in SAP_ID__c, plus GSTIN + state), create the ledger with it, and
+    // create the Tally_Account__c bridge row (distributor + account + SAP + GUID + GSTIN + state).
+    try {
+        const arows = await sfQuery(`SELECT Id, Name, SAP_ID__c, GST__c, BillingStateCode FROM Account ` +
+            `WHERE Name = '${soqlEsc(partyName)}' AND SAP_ID__c != null LIMIT 1`);
+        const a = arows[0];
+        if (a && a.SAP_ID__c) {
+            const w = await upsertLedgerWithSapId(server, port, partyName, fallbackGroup, a.SAP_ID__c, { log });
+            if (w.ok) {
+                log(`  party ledger '${partyName}' created from native Account (sap=${a.SAP_ID__c})`);
+                const rec = { Distributor__c: acct.id, Account__c: a.Id, Name: partyName.slice(0, 80), SAP_ID__c: a.SAP_ID__c, Sync_Status__c: 'From Tally' };
+                if (w.guid)
+                    rec.Tally_Guid__c = w.guid;
+                if (a.GST__c)
+                    rec.GSTIN__c = a.GST__c;
+                if (a.BillingStateCode) {
+                    rec.BillingAddress__CountryCode__s = 'IN';
+                    rec.BillingAddress__StateCode__s = a.BillingStateCode;
+                }
+                await sfInsert('Tally_Account__c', [rec]).then(() => log(`  Tally_Account__c bridge row created for '${partyName}'`)).catch((e) => log(`  (Tally_Account__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
+                return '';
+            }
+            log(`  party ledger '${partyName}' native-Account create failed (${w.message}) — falling back to bare`, true);
+        }
+    }
+    catch (e) {
+        log(`  party native Account lookup failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}; falling back to bare`, true);
+    }
+    return (await ensureLedger(server, port, partyName, fallbackGroup, log)) ? '' : `party ledger '${partyName}' is missing and could not be created`;
+}
+/** Ensure a voucher's STOCK ITEM exists in Tally — richly, so it is never a bare shell:
+ *   1. the distributor's Tally_Product__c (the org's mapped output) → SAP Id + UOM + GST% + HSN, or
+ *   2. the NATIVE Product2 (the source the org's trigger maps from) → Name + BaseUOM + GST% + HSN,
+ *      with the SAP Id rebuilt the same way the org does it: '<distributorSAP>-<productKey>', where
+ *      productKey is Product2.SAP_ID__c (falling back to ProductCode). This matches
+ *      DistProductMappingHandler, so an item created on-demand is identical to the master sync's.
+ *   3. only if neither exists → a bare item (name + unit).
+ *  productSapId is the staging line's Product_SAP_Id__c (= Product2.SAP_ID__c, the product key). */
+async function ensureStockItemRich(acct, server, port, name, fallbackUnit, productSapId, log) {
+    var _a, _b;
+    // 1) distributor's Tally_Product__c (already carries the merged SAP + GST/HSN).
+    try {
+        const rows = await sfQuery(`SELECT Id, SAP_ID__c, BaseUOM__c, GST_Percentage__c, HSN__c, Tally_Guid__c FROM Tally_Product__c ` +
+            `WHERE Account__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(name)}' LIMIT 1`);
+        const r = rows[0];
+        if (r && r.SAP_ID__c) {
+            const w = await upsertStockItemWithSapId(server, port, name, (r.BaseUOM__c || fallbackUnit || 'pcs'), r.SAP_ID__c, {
+                gstRate: (r.GST_Percentage__c != null) ? Number(r.GST_Percentage__c) : undefined,
+                hsn: r.HSN__c || undefined, knownGuid: r.Tally_Guid__c || undefined, log,
+            });
+            if (w.ok) {
+                log(`  stock item '${name}' created from Tally_Product (sap=${r.SAP_ID__c}, gst=${(_a = r.GST_Percentage__c) !== null && _a !== void 0 ? _a : 'n/a'}, hsn=${r.HSN__c || 'n/a'})`);
+                if (w.guid && w.guid !== r.Tally_Guid__c)
+                    await sfUpdate('Tally_Product__c', r.Id, { Tally_Guid__c: w.guid }).catch(() => { });
+                return true;
+            }
+            log(`  stock item '${name}' Tally_Product create failed (${w.message}) — trying native Product2`, true);
+        }
+    }
+    catch (e) {
+        log(`  stock item Tally_Product lookup failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}; trying native Product2`, true);
+    }
+    // 2) native Product2 (no Tally_Product__c for this distributor yet). Match by the product key
+    //    (Product2.SAP_ID__c) when we have it, else by name. Rebuild the merged SAP like the org.
+    try {
+        const psap = String(productSapId || '').trim();
+        const conds = [];
+        if (psap)
+            conds.push(`SAP_ID__c = '${soqlEsc(psap)}'`);
+        conds.push(`Name = '${soqlEsc(name)}'`);
+        const rows = await sfQuery(`SELECT Name, BaseUOM__c, GST_Percentage__c, HSN__c, SAP_ID__c, ProductCode FROM Product2 ` +
+            `WHERE ${conds.join(' OR ')} LIMIT 1`);
+        const p = rows[0];
+        if (p) {
+            const productKey = String(p.SAP_ID__c || p.ProductCode || psap || '').trim();
+            const mergedSap = productKey ? `${acct.sapId}-${productKey}` : ''; // '<distributorSAP>-<productKey>', as DistProductMappingHandler builds it
+            const w = await upsertStockItemWithSapId(server, port, name, (p.BaseUOM__c || fallbackUnit || 'pcs'), mergedSap, {
+                gstRate: (p.GST_Percentage__c != null) ? Number(p.GST_Percentage__c) : undefined,
+                hsn: p.HSN__c || undefined, log,
+            });
+            if (w.ok) {
+                log(`  stock item '${name}' created from native Product2 (sap=${mergedSap || 'n/a'}, gst=${(_b = p.GST_Percentage__c) !== null && _b !== void 0 ? _b : 'n/a'}, hsn=${p.HSN__c || 'n/a'})`);
+                // Also create the Tally_Product__c bridge row in SF (distributor + merged SAP + GST/HSN
+                // + the Tally GUID), so the master now exists on the SF side too, not just in Tally.
+                const rec = { Account__c: acct.id, Name: name.slice(0, 80), Tally_Guid__c: w.guid || undefined };
+                if (mergedSap)
+                    rec.SAP_ID__c = mergedSap;
+                if (p.BaseUOM__c)
+                    rec.BaseUOM__c = p.BaseUOM__c;
+                if (p.GST_Percentage__c != null)
+                    rec.GST_Percentage__c = Number(p.GST_Percentage__c);
+                if (p.HSN__c)
+                    rec.HSN__c = p.HSN__c;
+                await sfInsert('Tally_Product__c', [rec]).then(() => log(`  Tally_Product__c bridge row created for '${name}'`)).catch((e) => log(`  (Tally_Product__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
+                return true;
+            }
+            log(`  stock item '${name}' native Product2 create failed (${w.message}) — falling back to bare`, true);
+        }
+    }
+    catch (e) {
+        log(`  stock item Product2 lookup failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}; falling back to bare`, true);
+    }
+    // 3) last resort: bare item (name + unit).
+    return await ensureStockItem(server, port, name, fallbackUnit, log);
+}
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally (with their line items), then write status back. */
 export async function syncToTally(spec, acct, server, port, opts = {}) {
@@ -412,8 +543,15 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         ] : []),
     ];
     const selectFields = [...new Set([...sourceFields, ...addrFields])];
+    // Distributor scoping by SAP_Id__c. The org stamps a COMPOSITE SAP id on each staging row —
+    // '<distributorSAP>-<recordNo>' (e.g. '100273-00020961', '100273-INV-0000020638') — so the
+    // distributor is the PREFIX before the first dash, not the whole value. Match the bare id (rows
+    // the connector itself stamps on inbound) OR the '<sap>-...' composite (org-stamped rows), which
+    // uniformly identifies this distributor across all staging objects (not all have a Distributor__c
+    // lookup — only Invoice/Order do).
+    const sid = acct.sapId.replace(/'/g, "\\'");
     const soql = `SELECT Id, ${selectFields.join(', ')} FROM ${spec.stagingObject} ` +
-        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND SAP_Id__c = '${acct.sapId.replace(/'/g, "\\'")}'`;
+        `WHERE Direction__c = 'ToTally' AND Sync_Status__c = 'Pending' AND (SAP_Id__c = '${sid}' OR SAP_Id__c LIKE '${sid}-%')`;
     const rows = await sfQuery(soql);
     log(`[agent] ${spec.objectType}: ${rows.length} pending staging rows`);
     const res = { pending: rows.length, created: 0, failed: 0, errors: [] };
@@ -509,8 +647,10 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         const rule = ruleFor(spec.objectType, logical);
         let masterErr = '';
         if (!opts.dryRun) {
-            if (built.partyLedger && !(await ensureLedger(server, port, built.partyLedger, rule.partyGroup, log)))
-                masterErr = `party ledger '${built.partyLedger}' is missing and could not be created`;
+            // Party ledger: create it richly from its SF bridge row (SAP Id + real group) when
+            // missing, not a bare shell — only falls back to bare if there's no bridge row.
+            if (built.partyLedger)
+                masterErr = await ensurePartyLedgerRich(acct, server, port, built.partyLedger, rule.partyGroup, log);
             // Auto-create only the counter/accounting ledgers (Sales/Purchase) — NOT the GST tax
             // ledgers. GST ledgers are accountant-configured (correct tax classification); creating
             // one bare would corrupt GST returns. If a configured GST ledger is missing, let the
@@ -523,8 +663,10 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             for (const c of counters)
                 if (!masterErr && c && !(await ensureLedger(server, port, c, rule.counterGroup, log)))
                     masterErr = `ledger '${c}' is missing and could not be created`;
+            // Stock items: create richly from the SF bridge row (SAP Id + UOM + GST% + HSN) when
+            // missing, not a bare shell — only falls back to bare if there's no bridge row.
             for (const inv of (built.inventoryEntries || []))
-                if (!masterErr && !(await ensureStockItem(server, port, inv.stockItem, inv.unit, log)))
+                if (!masterErr && !(await ensureStockItemRich(acct, server, port, inv.stockItem, inv.unit, inv.productSapId || '', log)))
                     masterErr = `stock item '${inv.stockItem}' is missing and could not be created`;
         }
         if (masterErr) {

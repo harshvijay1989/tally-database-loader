@@ -22,6 +22,8 @@ export interface InventoryEntry {
                              //   order so Tally tracks pending/short. Requires order processing on.
     godown?: string;         // warehouse/location for this line; when set, emits a batch allocation
     batch?: string;          // batch name (defaults to 'Primary Batch' when a godown is set)
+    productSapId?: string;   // the product key (Product2.SAP_ID__c) from the staging line; used by the
+                             // voucher-time safety net to build a missing item from native Product2
 }
 export interface VoucherInput {
     date: string;            // YYYYMMDD

@@ -75,17 +75,18 @@ export async function syncAccountsToTally(acct, server, port, opts = {}) {
 // in tallyMaster) is unchanged; only the Salesforce object this reads/writes changed from our old
 // Tally_Godown__c to Tally_Shipping_Address__c.
 export const WAREHOUSE_ADDR_TYPE = 'Warehouse';
-/** OUTBOUND (SF -> Tally) WAREHOUSE master: push warehouse-type Tally_Shipping_Address__c rows
- *  tagged Sync_Status__c='To Tally' to Tally as godowns, then copy the real Tally GUID back.
- *  GUID-first identity (via upsertGodown) avoids duplicates on rename. No SAP Id — identity is
- *  GUID + name only. Godowns have no address in Tally, so only the Name is sent. */
+/** OUTBOUND (SF -> Tally) LOCATION master: push Tally_Shipping_Address__c rows tagged
+ *  Sync_Status__c='To Tally' to Tally as godowns (locations), then copy the real Tally GUID back.
+ *  Tally_Shipping_Address__c is the single "location" object for BOTH the distributor's own
+ *  warehouses AND customer ship-to addresses — every such row maps to a Tally godown — so this is
+ *  NOT restricted to Address_Type__c='Warehouse'; it pushes all location rows for the distributor
+ *  (scoped by Account__c). GUID-first identity (via upsertGodown) avoids duplicates on rename. */
 export async function syncWarehousesToTally(acct, server, port, opts = {}) {
     const log = opts.log || (() => { });
     const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
-    const rows = await sfQuery(`SELECT Id, Name, Tally_Guid__c ` +
+    const rows = await sfQuery(`SELECT Id, Name, Address_Type__c, Tally_Guid__c ` +
         `FROM Tally_Shipping_Address__c ` +
-        `WHERE Account__c = '${esc(acct.id)}' AND Address_Type__c = '${WAREHOUSE_ADDR_TYPE}' ` +
-        `AND Sync_Status__c = 'To Tally' ` +
+        `WHERE Account__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
         `ORDER BY Name`);
     res.scanned = rows.length;
     for (const r of rows) {
