@@ -76,11 +76,12 @@ export function buildVoucherImportXml(v: VoucherInput, action: 'Create' | 'Alter
         // a sale would wrongly ADD stock.
         + `<ACTUALQTY>${Math.abs(i.qty).toFixed(2)} ${esc(tallyUnitSymbol(i.unit))}</ACTUALQTY>`
         + `<BILLEDQTY>${Math.abs(i.qty).toFixed(2)} ${esc(tallyUnitSymbol(i.unit))}</BILLEDQTY>`
-        // NOTE: no <DISCOUNT> is emitted. Tally's <DISCOUNT> is a PERCENTAGE, but the staging
-        // Discount__c is an AMOUNT (e.g. 134.59 on a 6924.72 line = 1.94%), and the staging
-        // Amount__c/header total are GROSS — the discount is not deducted anywhere in Salesforce.
-        // Sending the raw number would discount by 134.59%; applying it properly would make the
-        // Tally voucher total disagree with the Salesforce order total. Pending a business decision.
+        // DELIBERATELY no <DISCOUNT>. Business rule: the Tally voucher total must MATCH Salesforce,
+        // for invoices and orders alike. Staging Amount__c (and the header total) are GROSS — the
+        // discount is not deducted anywhere in Salesforce — so Tally must post the gross figure too.
+        // Emitting Tally's <DISCOUNT> (a PERCENTAGE, whereas staging Discount__c is an AMOUNT) would
+        // both mis-scale the value and make Tally net it down, breaking that match. The discount
+        // stays recorded on the Salesforce line; it is informational, not a posting adjustment.
         // Order vouchers add the line's order due date; accounting allocations stay in both cases.
         + (v.isOrder ? `<ORDERDUEDATE>${esc(dueDate)}</ORDERDUEDATE>` : '')
         // A consuming voucher (purchase/sales invoice) carries the order number it fulfils, so
