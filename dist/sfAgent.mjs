@@ -2,6 +2,8 @@ import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
 import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId } from './tallyMaster.mjs';
+import { addressFromSf, resolveProductUnit, ensureProductStockGroups } from './sfMaster.mjs';
+import { loadOrgMapping, orgMappingSourceFields, buildMappedRecord } from './sfOrgMapping.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
 import { stateNameFromCode, canonStateCode } from './stateCodes.mjs';
 import { fetchFilteredCollection, postTallyXml, describeError } from './tallyLive.mjs';
@@ -273,6 +275,10 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extr
             // XML builder's 'Primary Batch' default when a godown is set.
             godown: voucherGodown,
             productSapId: ln.productSapId ? String(ln.productSapId) : undefined, // for the safety-net native-Product2 fallback
+            // Line discount %. The INBOUND path already round-trips this (Tally -> Tally_*_Line__c
+            // Discount__c); outbound never sent it, so a discounted sale posted to Tally at full
+            // rate. Only emitted when non-zero, so undiscounted lines stay byte-identical.
+            discount: (ln.discount != null && num(ln.discount) !== 0) ? num(ln.discount) : undefined,
         });
     }
     const total = lines.length ? lineTotal : Math.abs(num(logical.amount));
@@ -310,7 +316,11 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extr
             placeOfSupply: shipTo.stateName || undefined,
         } : {}),
         // Order vouchers need a reference (the order number) + a per-line order due date.
-        ...(rule.order ? { isOrder: true, reference: (logical.number ? String(logical.number) : (extra.orderRef || undefined)), orderDueDate: String(logical.date) } : {}),
+        // Bill reference on EVERY voucher type (Tally's <REFERENCE>): the business's own reference
+        // number, else this document's number. Orders additionally REQUIRE it to be non-empty —
+        // Tally rejects an order with a blank reference as "Bad Order Number in Voucher!".
+        reference: (logical.number ? String(logical.number) : (extra.reference || extra.orderRef || undefined)),
+        ...(rule.order ? { isOrder: true, orderDueDate: String(logical.date) } : {}),
     };
 }
 /** Reverse product map: Morde SAP Id -> the distributor's Tally stock item (name + base unit).
@@ -336,14 +346,14 @@ async function loadPendingLines(spec, headerIds, sapId, log) {
     const parentField = spec.lineParentRel.replace('__r', '__c'); // e.g. 'Invoice__r' -> 'Invoice__c'
     const ids = headerIds.map(i => `'${i}'`).join(',');
     try {
-        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c ` +
+        const rows = await sfQuery(`SELECT ${parentField}, Product_SAP_Id__c, Stock_Item__c, Quantity__c, Unit__c, Rate__c, Amount__c, Accounting_Ledger__c, Discount__c ` +
             `FROM ${spec.lineObject} WHERE ${parentField} IN (${ids}) ORDER BY Line_No__c NULLS LAST`);
         for (const r of rows) {
             const pid = r[parentField];
             if (!pid)
                 continue;
             const arr = out.get(pid) || [];
-            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c });
+            arr.push({ productSapId: r.Product_SAP_Id__c, stockItem: r.Stock_Item__c, qty: r.Quantity__c, unit: r.Unit__c, rate: r.Rate__c, amount: r.Amount__c, ledger: r.Accounting_Ledger__c, discount: r.Discount__c });
             out.set(pid, arr);
         }
     }
@@ -380,17 +390,44 @@ async function lookupVoucherGuid(server, port, spec, v) {
     }
 }
 const soqlEsc = (s) => String(s == null ? '' : s).replace(/'/g, "\\'");
+/** Stock groups already ensured this process — the voucher-time path hits the same categories
+ *  repeatedly (one voucher per order, same products), so this keeps it to one create per group. */
+const stockGroupsDone = new Set();
+/** SELECT `fields` from `object`, falling back to `safeFields` if the wide query fails. The wide
+ *  field list is driven by org metadata, so a single renamed/unreadable field there must not break
+ *  master creation — we degrade to the minimal set and carry on. Returns the first row, or null. */
+async function selectWithFallback(object, fields, safeFields, whereClause, log) {
+    try {
+        const rows = await sfQuery(`SELECT ${fields.join(', ')} FROM ${object} WHERE ${whereClause}`);
+        return rows[0] || null;
+    }
+    catch (e) {
+        log(`  ${object}: wide (org-mapped) select failed — ${(e === null || e === void 0 ? void 0 : e.message) || e}; retrying with base fields`, true);
+        try {
+            const rows = await sfQuery(`SELECT ${safeFields.join(', ')} FROM ${object} WHERE ${whereClause}`);
+            return rows[0] || null;
+        }
+        catch (e2) {
+            log(`  ${object}: base select also failed — ${(e2 === null || e2 === void 0 ? void 0 : e2.message) || e2}`, true);
+            return null;
+        }
+    }
+}
 /** Ensure a voucher's PARTY LEDGER exists in Tally — richly. Instead of a bare shell, look up the
  *  party's Salesforce bridge row (Tally_Account__c, which the org's trigger populates from the native
  *  Account) and create the ledger with its SAP Id + real Account Group, writing the Tally GUID back.
  *  Falls back to a bare ledger only when there is no bridge row. Returns '' on success, else an error. */
 async function ensurePartyLedgerRich(acct, server, port, partyName, fallbackGroup, log) {
     try {
-        const rows = await sfQuery(`SELECT Id, SAP_ID__c, Account_Group__c, Tally_Guid__c FROM Tally_Account__c ` +
+        const rows = await sfQuery(`SELECT Id, SAP_ID__c, Account_Group__c, Tally_Guid__c, ` +
+            `BillingAddress__Street__s, BillingAddress__City__s, BillingAddress__PostalCode__s, ` +
+            `BillingAddress__StateCode__s, GSTIN__c, Phone__c, Email__c, Mailing_Name__c ` +
+            `FROM Tally_Account__c ` +
             `WHERE Distributor__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(partyName)}' LIMIT 1`);
         const r = rows[0];
         if (r && r.SAP_ID__c) {
-            const w = await upsertLedgerWithSapId(server, port, partyName, r.Account_Group__c || fallbackGroup, r.SAP_ID__c, { knownGuid: r.Tally_Guid__c || undefined, log });
+            const address = addressFromSf(r, 'BillingAddress__', { gstin: r.GSTIN__c, phone: r.Phone__c, email: r.Email__c, mailingName: r.Mailing_Name__c });
+            const w = await upsertLedgerWithSapId(server, port, partyName, r.Account_Group__c || fallbackGroup, r.SAP_ID__c, { knownGuid: r.Tally_Guid__c || undefined, address, log });
             if (w.ok) {
                 log(`  party ledger '${partyName}' created from SF (sap=${r.SAP_ID__c}, group=${r.Account_Group__c || fallbackGroup})`);
                 if (w.guid && w.guid !== r.Tally_Guid__c)
@@ -407,23 +444,35 @@ async function ensurePartyLedgerRich(acct, server, port, partyName, fallbackGrou
     // org-generated customer SAP in SAP_ID__c, plus GSTIN + state), create the ledger with it, and
     // create the Tally_Account__c bridge row (distributor + account + SAP + GUID + GSTIN + state).
     try {
-        const arows = await sfQuery(`SELECT Id, Name, SAP_ID__c, GST__c, BillingStateCode FROM Account ` +
-            `WHERE Name = '${soqlEsc(partyName)}' AND SAP_ID__c != null LIMIT 1`);
-        const a = arows[0];
+        // Read the native Account through the ORG'S OWN mapping metadata so the bridge row we
+        // create carries the SAME full field set its trigger would have written (address, credit
+        // terms, PAN, contact, ...), not a hand-picked handful.
+        const maps = await loadOrgMapping('Account', 'Tally_Account__c');
+        const baseFields = ['Id', 'Name', 'SAP_ID__c', 'GST__c', 'BillingStateCode', 'BillingStreet', 'BillingCity', 'BillingPostalCode', 'BillingCountryCode'];
+        const a = await selectWithFallback('Account', [...new Set([...baseFields, ...orgMappingSourceFields(maps)])], baseFields, `Name = '${soqlEsc(partyName)}' AND SAP_ID__c != null LIMIT 1`, log);
         if (a && a.SAP_ID__c) {
-            const w = await upsertLedgerWithSapId(server, port, partyName, fallbackGroup, a.SAP_ID__c, { log });
+            const address = {
+                lines: String(a.BillingStreet || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+                city: a.BillingCity || '', state: stateNameFromCode(a.BillingStateCode) || '',
+                pincode: a.BillingPostalCode || '', country: 'India', gstin: a.GST__c || undefined,
+            };
+            const w = await upsertLedgerWithSapId(server, port, partyName, fallbackGroup, a.SAP_ID__c, { address, log });
             if (w.ok) {
-                log(`  party ledger '${partyName}' created from native Account (sap=${a.SAP_ID__c})`);
-                const rec = { Distributor__c: acct.id, Account__c: a.Id, Name: partyName.slice(0, 80), SAP_ID__c: a.SAP_ID__c, Sync_Status__c: 'From Tally' };
+                log(`  party ledger '${partyName}' created from native Account (sap=${a.SAP_ID__c}, address='${[address.city, address.state].filter(Boolean).join(', ') || 'none'}')`);
+                // Org-mapped fields first, then the keys only the connector knows (links + GUID).
+                const rec = {
+                    ...buildMappedRecord(a, maps, ['Distributor__c']),
+                    Distributor__c: acct.id, Account__c: a.Id, Name: partyName.slice(0, 80), SAP_ID__c: a.SAP_ID__c,
+                };
+                if (!rec.Sync_Status__c)
+                    rec.Sync_Status__c = 'From Tally';
                 if (w.guid)
                     rec.Tally_Guid__c = w.guid;
-                if (a.GST__c)
-                    rec.GSTIN__c = a.GST__c;
                 if (a.BillingStateCode) {
                     rec.BillingAddress__CountryCode__s = 'IN';
                     rec.BillingAddress__StateCode__s = a.BillingStateCode;
                 }
-                await sfInsert('Tally_Account__c', [rec]).then(() => log(`  Tally_Account__c bridge row created for '${partyName}'`)).catch((e) => log(`  (Tally_Account__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
+                await sfInsert('Tally_Account__c', [rec]).then(() => log(`  Tally_Account__c bridge row created for '${partyName}' (${Object.keys(rec).length} fields)`)).catch((e) => log(`  (Tally_Account__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
                 return '';
             }
             log(`  party ledger '${partyName}' native-Account create failed (${w.message}) — falling back to bare`, true);
@@ -446,16 +495,19 @@ async function ensureStockItemRich(acct, server, port, name, fallbackUnit, produ
     var _a, _b;
     // 1) distributor's Tally_Product__c (already carries the merged SAP + GST/HSN).
     try {
-        const rows = await sfQuery(`SELECT Id, SAP_ID__c, BaseUOM__c, GST_Percentage__c, HSN__c, Tally_Guid__c FROM Tally_Product__c ` +
+        const rows = await sfQuery(`SELECT Id, SAP_ID__c, BaseUOM__c, PackType__c, Category__c, SubCategory__c, ` +
+            `GST_Percentage__c, HSN__c, Tally_Guid__c FROM Tally_Product__c ` +
             `WHERE Account__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(name)}' LIMIT 1`);
         const r = rows[0];
         if (r && r.SAP_ID__c) {
-            const w = await upsertStockItemWithSapId(server, port, name, (r.BaseUOM__c || fallbackUnit || 'pcs'), r.SAP_ID__c, {
+            const stockGroup = String(r.SubCategory__c || '').trim() || String(r.Category__c || '').trim() || undefined;
+            await ensureProductStockGroups(server, port, r.Category__c || '', r.SubCategory__c || '', stockGroupsDone, log);
+            const w = await upsertStockItemWithSapId(server, port, name, resolveProductUnit(r, fallbackUnit || 'Nos'), r.SAP_ID__c, {
                 gstRate: (r.GST_Percentage__c != null) ? Number(r.GST_Percentage__c) : undefined,
-                hsn: r.HSN__c || undefined, knownGuid: r.Tally_Guid__c || undefined, log,
+                hsn: r.HSN__c || undefined, knownGuid: r.Tally_Guid__c || undefined, stockGroup, log,
             });
             if (w.ok) {
-                log(`  stock item '${name}' created from Tally_Product (sap=${r.SAP_ID__c}, gst=${(_a = r.GST_Percentage__c) !== null && _a !== void 0 ? _a : 'n/a'}, hsn=${r.HSN__c || 'n/a'})`);
+                log(`  stock item '${name}' created from Tally_Product (sap=${r.SAP_ID__c}, unit=${resolveProductUnit(r, fallbackUnit || 'Nos')}, group=${stockGroup || 'n/a'}, gst=${(_a = r.GST_Percentage__c) !== null && _a !== void 0 ? _a : 'n/a'}, hsn=${r.HSN__c || 'n/a'})`);
                 if (w.guid && w.guid !== r.Tally_Guid__c)
                     await sfUpdate('Tally_Product__c', r.Id, { Tally_Guid__c: w.guid }).catch(() => { });
                 return true;
@@ -474,30 +526,32 @@ async function ensureStockItemRich(acct, server, port, name, fallbackUnit, produ
         if (psap)
             conds.push(`SAP_ID__c = '${soqlEsc(psap)}'`);
         conds.push(`Name = '${soqlEsc(name)}'`);
-        const rows = await sfQuery(`SELECT Name, BaseUOM__c, GST_Percentage__c, HSN__c, SAP_ID__c, ProductCode FROM Product2 ` +
-            `WHERE ${conds.join(' OR ')} LIMIT 1`);
-        const p = rows[0];
+        // Read Product2 through the ORG'S OWN mapping metadata (35 fields) so the bridge row we
+        // create is identical to a DistProductMappingHandler-created one — category, sub-category,
+        // pack type, brand and the rest — instead of the 5 fields this used to copy.
+        const maps = await loadOrgMapping('Product2', 'Tally_Product__c');
+        const baseFields = ['Name', 'BaseUOM__c', 'PackType__c', 'Category__c', 'SubCategory__c', 'GST_Percentage__c', 'HSN__c', 'SAP_ID__c', 'ProductCode'];
+        const p = await selectWithFallback('Product2', [...new Set([...baseFields, ...orgMappingSourceFields(maps)])], baseFields, `${conds.join(' OR ')} LIMIT 1`, log);
         if (p) {
             const productKey = String(p.SAP_ID__c || p.ProductCode || psap || '').trim();
             const mergedSap = productKey ? `${acct.sapId}-${productKey}` : ''; // '<distributorSAP>-<productKey>', as DistProductMappingHandler builds it
-            const w = await upsertStockItemWithSapId(server, port, name, (p.BaseUOM__c || fallbackUnit || 'pcs'), mergedSap, {
+            const unit = resolveProductUnit(p, fallbackUnit || 'Nos');
+            const stockGroup = String(p.SubCategory__c || '').trim() || String(p.Category__c || '').trim() || undefined;
+            await ensureProductStockGroups(server, port, p.Category__c || '', p.SubCategory__c || '', stockGroupsDone, log);
+            const w = await upsertStockItemWithSapId(server, port, name, unit, mergedSap, {
                 gstRate: (p.GST_Percentage__c != null) ? Number(p.GST_Percentage__c) : undefined,
-                hsn: p.HSN__c || undefined, log,
+                hsn: p.HSN__c || undefined, stockGroup, log,
             });
             if (w.ok) {
-                log(`  stock item '${name}' created from native Product2 (sap=${mergedSap || 'n/a'}, gst=${(_b = p.GST_Percentage__c) !== null && _b !== void 0 ? _b : 'n/a'}, hsn=${p.HSN__c || 'n/a'})`);
-                // Also create the Tally_Product__c bridge row in SF (distributor + merged SAP + GST/HSN
-                // + the Tally GUID), so the master now exists on the SF side too, not just in Tally.
-                const rec = { Account__c: acct.id, Name: name.slice(0, 80), Tally_Guid__c: w.guid || undefined };
+                log(`  stock item '${name}' created from native Product2 (sap=${mergedSap || 'n/a'}, unit=${unit}, group=${stockGroup || 'n/a'}, gst=${(_b = p.GST_Percentage__c) !== null && _b !== void 0 ? _b : 'n/a'}, hsn=${p.HSN__c || 'n/a'})`);
+                // Bridge row with the FULL org-mapped field set, plus the keys only we know.
+                const rec = {
+                    ...buildMappedRecord(p, maps, ['Account__c']),
+                    Account__c: acct.id, Name: name.slice(0, 80), Tally_Guid__c: w.guid || undefined,
+                };
                 if (mergedSap)
                     rec.SAP_ID__c = mergedSap;
-                if (p.BaseUOM__c)
-                    rec.BaseUOM__c = p.BaseUOM__c;
-                if (p.GST_Percentage__c != null)
-                    rec.GST_Percentage__c = Number(p.GST_Percentage__c);
-                if (p.HSN__c)
-                    rec.HSN__c = p.HSN__c;
-                await sfInsert('Tally_Product__c', [rec]).then(() => log(`  Tally_Product__c bridge row created for '${name}'`)).catch((e) => log(`  (Tally_Product__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
+                await sfInsert('Tally_Product__c', [rec]).then(() => log(`  Tally_Product__c bridge row created for '${name}' (${Object.keys(rec).length} fields)`)).catch((e) => log(`  (Tally_Product__c bridge insert skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
                 return true;
             }
             log(`  stock item '${name}' native Product2 create failed (${w.message}) — falling back to bare`, true);
@@ -542,12 +596,16 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             'Customer_Shipping_Address__r.Full_Address__PostalCode__s',
         ] : []),
     ];
-    // Order vouchers REQUIRE a non-empty voucher <REFERENCE>; Tally rejects an order without one
-    // as "Bad Order Number in Voucher!". The mapped `number` is frequently blank, so always fetch a
-    // fallback order identifier — the Tally order number (Order object), else the record Name.
-    const orderRefFields = (spec.objectType === 'Order' || spec.objectType === 'PurchaseOrder')
-        ? ['Name', ...(spec.objectType === 'Order' ? ['Order_Number__c'] : [])] : [];
-    const selectFields = [...new Set([...sourceFields, ...addrFields, ...orderRefFields])];
+    // Document number + bill reference. The org's `number` mapping points at Tally_Voucher_Number__c,
+    // which is the field we WRITE BACK after posting — so it is always blank on an outbound row and
+    // no document number ever reached Tally (this is what made order vouchers fail "Bad Order Number",
+    // and why invoices carried no reference). Fetch the real identifiers instead:
+    //   Order_Number__c   - the actual order number (Order/Purchase/PurchaseOrder)
+    //   Reference_Number__c - the bill reference the business typed (all staging objects)
+    //   Name              - the record's own number (ORD-000158), the last-resort identifier
+    const hasOrderNo = ['Order', 'Purchase', 'PurchaseOrder'].includes(spec.objectType);
+    const docRefFields = ['Name', 'Reference_Number__c', ...(hasOrderNo ? ['Order_Number__c'] : [])];
+    const selectFields = [...new Set([...sourceFields, ...addrFields, ...docRefFields])];
     // Distributor scoping by SAP_Id__c. The org stamps a COMPOSITE SAP id on each staging row —
     // '<distributorSAP>-<recordNo>' (e.g. '100273-00020961', '100273-INV-0000020638') — so the
     // distributor is the PREFIX before the first dash, not the whole value. Match the bare id (rows
@@ -634,8 +692,10 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
                     zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
             }
         }
+        // Document number (what this voucher IS) and bill reference (what it points at).
         const orderRef = String(row.Order_Number__c || row.Name || '').trim();
-        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, { defaultGodown, headerGodown, shipTo, orderRef });
+        const reference = String(row.Reference_Number__c || '').trim() || orderRef;
+        const built = assembleVoucher(spec.objectType, logical, linesByParent.get(row.Id) || [], itemBySap, gstCtx, { defaultGodown, headerGodown, shipTo, orderRef, reference });
         if (typeof built === 'string') {
             res.failed++;
             res.errors.push(`${row.Id}: ${built}`);

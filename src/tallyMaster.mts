@@ -16,6 +16,48 @@ function esc(s: any): string {
 function q(s: string): string { return (s || '').replace(/"/g, ''); } // for inside Tally "..." filter literals
 const num = (xml: string, tag: string) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
 
+/** A postal address destined for a Tally ledger (mailing address or one multi-address entry). */
+export interface TallyAddress {
+    lines?: string[];     // street lines (city/pincode are appended as a final line by the caller if wanted)
+    city?: string;
+    state?: string;       // Tally wants the state NAME ('Maharashtra'), not the SF code ('MH')
+    pincode?: string;
+    country?: string;     // defaults to 'India'
+    gstin?: string;
+    phone?: string;
+    email?: string;
+    mailingName?: string; // defaults to the ledger name
+    addressName?: string; // multi-address entries only: the label shown in Tally's address list
+}
+
+const hasAddr = (a?: TallyAddress) =>
+    !!a && !!((a.lines && a.lines.filter(Boolean).length) || a.city || a.state || a.pincode || a.gstin || a.phone || a.email);
+
+/** The <ADDRESS.LIST> block (street lines plus a trailing "City Pincode" line when present). */
+function addressLinesXml(a: TallyAddress): string {
+    const lines = [...(a.lines || []).filter(Boolean)];
+    const cityLine = [a.city, a.pincode].filter(Boolean).join(' ').trim();
+    if (cityLine) lines.push(cityLine);
+    if (!lines.length) return '';
+    return '<ADDRESS.LIST TYPE="String">' + lines.map(l => `<ADDRESS>${esc(l)}</ADDRESS>`).join('') + '</ADDRESS.LIST>';
+}
+
+/** Mailing address for a ledger. TallyPrime stores this in <LEDMAILINGDETAILS.LIST> — a flat
+ *  <ADDRESS.LIST> on the LEDGER is accepted by the import but SILENTLY DISCARDED (verified live),
+ *  which is why ledgers were landing in Tally with no address at all. */
+function ledgerMailingXml(a: TallyAddress, ledgerName: string, applicableFrom: string): string {
+    const body = addressLinesXml(a)
+        + `<MAILINGNAME>${esc(a.mailingName || ledgerName)}</MAILINGNAME>`
+        + (a.state ? `<STATE>${esc(a.state)}</STATE>` : '')
+        + `<COUNTRY>${esc(a.country || 'India')}</COUNTRY>`
+        + (a.pincode ? `<PINCODE>${esc(a.pincode)}</PINCODE>` : '');
+    return `<LEDMAILINGDETAILS.LIST><APPLICABLEFROM>${esc(applicableFrom)}</APPLICABLEFROM>${body}</LEDMAILINGDETAILS.LIST>`
+        + (a.gstin ? `<PARTYGSTIN>${esc(a.gstin)}</PARTYGSTIN>` : '')
+        + (a.phone ? `<LEDGERPHONE>${esc(a.phone)}</LEDGERPHONE>` : '')
+        + (a.email ? `<EMAIL>${esc(a.email)}</EMAIL>` : '')
+        + (a.state ? `<LEDGERSTATENAME>${esc(a.state)}</LEDGERSTATENAME>` : '');
+}
+
 export interface MasterKey { name: string; guid: string; sapId: string; parent?: string; alterId: number; unit?: string; state?: string; gstin?: string; }
 export interface MasterWriteResult { ok: boolean; created: number; altered: number; errors: number; message: string; guid?: string; renamedFrom?: string; }
 
@@ -98,7 +140,7 @@ function parseMasterKeys(xml: string, tag: string): MasterKey[] {
  *  name changed, instead of creating a duplicate. Returns the ledger's GUID on success. */
 export async function upsertLedgerWithSapId(
     server: string, port: number, name: string, parentGroup: string, sapId: string,
-    opts: { knownGuid?: string; log?: (m: string, e?: boolean) => void } = {},
+    opts: { knownGuid?: string; address?: TallyAddress; applicableFrom?: string; log?: (m: string, e?: boolean) => void } = {},
 ): Promise<MasterWriteResult> {
     const log = opts.log || (() => { });
     // GUID-first identity: if SF already has a GUID, find the ledger's current name by it.
@@ -122,10 +164,14 @@ export async function upsertLedgerWithSapId(
         : (renameTo ? `<NAME.LIST TYPE="String"><NAME>${esc(renameTo)}</NAME></NAME.LIST>` : '');
     const parentXml = action === 'Create' ? `<PARENT>${esc(parentGroup)}</PARENT>` : '';
     const sapXml = sapId ? `<MORDESAPID>${esc(sapId)}</MORDESAPID>` : '';
+    // Mailing address (street/city/state/pincode + GSTIN/phone/email). Emitted on Alter as well as
+    // Create so an address added or corrected in Salesforce reaches an already-synced ledger.
+    const addrXml = hasAddr(opts.address)
+        ? ledgerMailingXml(opts.address!, renameTo || name, opts.applicableFrom || '20000401') : '';
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}</LEDGER>`
+        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}</LEDGER>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');
@@ -136,6 +182,59 @@ export async function upsertLedgerWithSapId(
     const finalName = renameTo || name;
     const keys = await readLedgerKeys(server, port, { names: [finalName] });
     return { ok, created, altered, errors, message: 'ok', guid: keys[0]?.guid || opts.knownGuid, renamedFrom: renameTo ? currentName : undefined };
+}
+
+/** Add/replace ONE named address in a ledger's "multiple addresses" list. This is where a CUSTOMER's
+ *  ship-to / billing address belongs — a customer address is NOT a godown (a godown is one of the
+ *  distributor's OWN stock locations). Turns the multi-address feature on for the ledger, then adds
+ *  the entry keyed by ADDRESSNAME (re-sending the same name updates it). Verified against live
+ *  TallyPrime. Returns true on success. */
+export async function setLedgerMultiAddress(server: string, port: number, ledgerName: string,
+    addr: TallyAddress, log?: (m: string, e?: boolean) => void): Promise<boolean> {
+    const label = (addr.addressName || '').trim();
+    if (!ledgerName || !label) return false;
+    const body = `<ADDRESSNAME>${esc(label)}</ADDRESSNAME>`
+        + addressLinesXml(addr)
+        + (addr.state ? `<STATE>${esc(addr.state)}</STATE>` : '')
+        + `<COUNTRY>${esc(addr.country || 'India')}</COUNTRY>`
+        + (addr.pincode ? `<PINCODE>${esc(addr.pincode)}</PINCODE>` : '')
+        + (addr.gstin ? `<PARTYGSTIN>${esc(addr.gstin)}</PARTYGSTIN>` : '')
+        + (addr.phone ? `<PHONENUMBER>${esc(addr.phone)}</PHONENUMBER>` : '')
+        + (addr.email ? `<EMAIL>${esc(addr.email)}</EMAIL>` : '');
+    const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
+        + `<LEDGER NAME="${esc(ledgerName)}" ACTION="Alter">`
+        + '<ISMULTIADDRESSAPPLICABLE>Yes</ISMULTIADDRESSAPPLICABLE>'
+        + `<LEDMULTIADDRESSLIST.LIST>${body}</LEDMULTIADDRESSLIST.LIST>`
+        + '</LEDGER>'
+        + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
+    const resp = await postTallyXml(server, port, xml, 30000);
+    const lineErr = (resp.match(/<LINEERROR>([^<]*)<\/LINEERROR>/i) || [])[1] || '';
+    const ok = (num(resp, 'ALTERED') + num(resp, 'CREATED')) > 0 && !lineErr;
+    log?.(`ledger '${ledgerName}' address '${label}': ${ok ? 'set' : 'FAILED — ' + (lineErr || 'no change')}`, !ok);
+    return ok;
+}
+
+/** Ensure a STOCK GROUP (product category) exists, optionally nested under a parent group.
+ *  Used to mirror the SF Category__c > SubCategory__c hierarchy into Tally. Idempotent: a
+ *  duplicate create is reported by Tally and treated as success. */
+export async function ensureStockGroup(server: string, port: number, name: string,
+    parent?: string, log?: (m: string, e?: boolean) => void): Promise<boolean> {
+    const n = (name || '').trim();
+    if (!n) return false;
+    const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
+        + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
+        + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
+        + `<STOCKGROUP NAME="${esc(n)}" ACTION="Create"><NAME.LIST><NAME>${esc(n)}</NAME></NAME.LIST>`
+        + ((parent || '').trim() ? `<PARENT>${esc(parent!.trim())}</PARENT>` : '')
+        + '<ISADDABLE>Yes</ISADDABLE></STOCKGROUP>'
+        + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
+    const resp = await postTallyXml(server, port, xml, 30000);
+    const lineErr = (resp.match(/<LINEERROR>([^<]*)<\/LINEERROR>/i) || [])[1] || '';
+    const ok = num(resp, 'CREATED') > 0 || /duplicate|already exist/i.test(lineErr);
+    if (!ok) log?.(`stock group '${n}': create failed — ${lineErr}`, true);
+    return ok;
 }
 
 /** Write only the SAP Id onto an existing ledger (used when SF later assigns a SAP Id). */
@@ -410,7 +509,9 @@ export async function upsertStockItemWithSapId(
         ? `<NAME.LIST><NAME>${esc(name)}</NAME></NAME.LIST>`
         : (renameTo ? `<NAME.LIST TYPE="String"><NAME>${esc(renameTo)}</NAME></NAME.LIST>` : '');
     const baseUnitsXml = action === 'Create' ? `<BASEUNITS>${esc(unit)}</BASEUNITS>` : '';
-    const parentXml = action === 'Create' && opts.stockGroup ? `<PARENT>${esc(opts.stockGroup)}</PARENT>` : '';
+    // Stock group (product category). Emitted on Alter as well as Create so items that were
+    // created before category sync existed get re-grouped instead of staying under the default.
+    const parentXml = opts.stockGroup ? `<PARENT>${esc(opts.stockGroup)}</PARENT>` : '';
     const sapXml = sapId ? `<MORDESAPID>${esc(sapId)}</MORDESAPID>` : '';
     const gstXml = (typeof opts.gstRate === 'number' && opts.gstRate >= 0) ? gstDetailsXml(opts.gstRate, opts.hsn) : '';
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'

@@ -1,7 +1,54 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { AccountRef } from './sfConfig.mjs';
-import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, MasterKey } from './tallyMaster.mjs';
-import { resolveStateCode } from './stateCodes.mjs';
+import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, ensureStockGroup, setLedgerMultiAddress, tallyUnitSymbol, MasterKey, TallyAddress } from './tallyMaster.mjs';
+import { resolveStateCode, stateNameFromCode } from './stateCodes.mjs';
+
+/** Build a TallyAddress from a Salesforce compound-address field set (e.g. 'BillingAddress__' on
+ *  Tally_Account__c, 'Full_Address__' on Tally_Shipping_Address__c). Salesforce stores the STATE
+ *  CODE ('MH'); Tally wants the state NAME ('Maharashtra'), so translate it here. */
+export function addressFromSf(row: Record<string, any>, prefix: string,
+    extra: { gstin?: string; phone?: string; email?: string; mailingName?: string; addressName?: string } = {}): TallyAddress {
+    const g = (f: string) => { const v = row[`${prefix}${f}__s`]; return v == null ? '' : String(v).trim(); };
+    const street = g('Street');
+    return {
+        lines: street ? street.split(/\r?\n/).map(s => s.trim()).filter(Boolean) : [],
+        city: g('City'),
+        state: stateNameFromCode(g('StateCode')) || '',
+        pincode: g('PostalCode'),
+        country: 'India',
+        gstin: (extra.gstin || '').trim() || undefined,
+        phone: (extra.phone || '').trim() || undefined,
+        email: (extra.email || '').trim() || undefined,
+        mailingName: (extra.mailingName || '').trim() || undefined,
+        addressName: (extra.addressName || '').trim() || undefined,
+    };
+}
+
+/** One-line description of an address, for dry-run/log output. */
+export function addressSummary(a: TallyAddress): string {
+    return [...(a.lines || []), a.city, a.state, a.pincode].filter(Boolean).join(', ') || '(none)';
+}
+
+/** The stock item's unit of measure. PackType__c is the REAL packing unit (Bucket / Carton Box);
+ *  BaseUOM__c is only a fallback because in this org it is literally 'Carton Box' on every product
+ *  — including ones sold in buckets — so using it alone made every item carton-box. */
+export function resolveProductUnit(row: Record<string, any>, fallback = 'Nos'): string {
+    const pick = String(row.PackType__c || '').trim() || String(row.BaseUOM__c || '').trim() || fallback;
+    return tallyUnitSymbol(pick);
+}
+
+/** Create the Category > SubCategory stock groups for a product (once per run, tracked in `done`). */
+export async function ensureProductStockGroups(server: string, port: number, category: string,
+    subCategory: string, done: Set<string>, log?: LogFn): Promise<void> {
+    const cat = (category || '').trim();
+    const sub = (subCategory || '').trim();
+    if (cat && !done.has(`c:${cat}`)) { await ensureStockGroup(server, port, cat, undefined, log); done.add(`c:${cat}`); }
+    // The sub-group nests under its category (when there is one); a sub with no category is top-level.
+    if (sub && sub !== cat && !done.has(`s:${cat}>${sub}`)) {
+        await ensureStockGroup(server, port, sub, cat || undefined, log);
+        done.add(`s:${cat}>${sub}`);
+    }
+}
 
 // Account master bridge (Tally side only). Morde's ORG already owns the Salesforce-side
 // orchestration in Apex:
@@ -52,7 +99,12 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
     // has a SAP Id and no GUID yet. GUID-blank makes this self-terminating (once we write the
     // GUID back the row drops out of this query and is never pushed again).
     const rows = await sfQuery(
-        `SELECT Id, Name, SAP_ID__c, Tally_Guid__c, Account_Group__c ` +
+        `SELECT Id, Name, SAP_ID__c, Tally_Guid__c, Account_Group__c, ` +
+        // Mailing address + contact/tax identity — without these the Tally ledger is created
+        // address-less (the org holds the full address on Tally_Account__c; we simply never sent it).
+        `BillingAddress__Street__s, BillingAddress__City__s, BillingAddress__PostalCode__s, ` +
+        `BillingAddress__StateCode__s, BillingAddress__CountryCode__s, ` +
+        `GSTIN__c, Phone__c, Email__c, Mailing_Name__c ` +
         `FROM Tally_Account__c ` +
         `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
         `AND SAP_ID__c != null AND Tally_Guid__c = null ` +
@@ -62,9 +114,10 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
         const name: string = r.Name;
         const sapId: string = r.SAP_ID__c || '';
         const group: string = r.Account_Group__c || DEFAULT_DEBTOR_GROUP;
-        if (opts.dryRun) { log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}')`); continue; }
+        const address = addressFromSf(r, 'BillingAddress__', { gstin: r.GSTIN__c, phone: r.Phone__c, email: r.Email__c, mailingName: r.Mailing_Name__c });
+        if (opts.dryRun) { log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}', address='${addressSummary(address)}')`); continue; }
         try {
-            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log });
+            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log, address });
             if (!w.ok) { res.failed++; res.errors.push(`${name}: ${w.message}`); await logTrigger('SF->Tally Account', 'Error', 'Tally_Account__c', r.Id, w.message); continue; }
             res.pushed++;
             if (w.guid) {
@@ -91,12 +144,13 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
 // Tally_Godown__c to Tally_Shipping_Address__c.
 export const WAREHOUSE_ADDR_TYPE = 'Warehouse';
 
-/** OUTBOUND (SF -> Tally) LOCATION master: push Tally_Shipping_Address__c rows tagged
- *  Sync_Status__c='To Tally' to Tally as godowns (locations), then copy the real Tally GUID back.
- *  Tally_Shipping_Address__c is the single "location" object for BOTH the distributor's own
- *  warehouses AND customer ship-to addresses — every such row maps to a Tally godown — so this is
- *  NOT restricted to Address_Type__c='Warehouse'; it pushes all location rows for the distributor
- *  (scoped by Account__c). GUID-first identity (via upsertGodown) avoids duplicates on rename. */
+/** OUTBOUND (SF -> Tally) LOCATION master: push the distributor's OWN warehouses as Tally godowns.
+ *  Tally_Shipping_Address__c holds two different things, told apart by Address_Type__c:
+ *    * 'Warehouse'          -> one of the DISTRIBUTOR's own stock locations  = a Tally GODOWN (here)
+ *    * 'Shipping'/'Billing' -> a CUSTOMER's address, which is NOT a stock location: it belongs on
+ *                              that customer's ledger as a Tally "multiple address" entry
+ *                              (see syncCustomerAddressesToTally).
+ *  Creating a godown for a customer address was wrong — it invented phantom stock locations. */
 export async function syncWarehousesToTally(acct: AccountRef, server: string, port: number,
     opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
@@ -105,6 +159,7 @@ export async function syncWarehousesToTally(acct: AccountRef, server: string, po
         `SELECT Id, Name, Address_Type__c, Tally_Guid__c ` +
         `FROM Tally_Shipping_Address__c ` +
         `WHERE Account__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
+        `AND Address_Type__c = '${esc(WAREHOUSE_ADDR_TYPE)}' ` +
         `ORDER BY Name`);
     res.scanned = rows.length;
     for (const r of rows) {
@@ -126,6 +181,52 @@ export async function syncWarehousesToTally(acct: AccountRef, server: string, po
         }
     }
     log(`SF->Tally warehouses: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
+    return res;
+}
+
+/** OUTBOUND (SF -> Tally) CUSTOMER ADDRESSES: Tally_Shipping_Address__c rows that are NOT the
+ *  distributor's own warehouse (Address_Type__c 'Shipping' / 'Billing') describe a CUSTOMER's
+ *  delivery or billing address. In Tally those live on the customer's LEDGER as a "multiple
+ *  address" entry (labelled by the row's Name) — never as a godown. The customer ledger is the
+ *  row's Tally_Account__c lookup; a row without one cannot be placed and is reported, not guessed. */
+export async function syncCustomerAddressesToTally(acct: AccountRef, server: string, port: number,
+    opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<MasterSyncResult> {
+    const log = opts.log || (() => { });
+    const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
+    const rows = await sfQuery(
+        `SELECT Id, Name, Address_Type__c, Tally_Account__r.Name, Tally_Account__r.GSTIN__c, ` +
+        `Full_Address__Street__s, Full_Address__City__s, Full_Address__PostalCode__s, ` +
+        `Full_Address__StateCode__s, Full_Address__CountryCode__s ` +
+        `FROM Tally_Shipping_Address__c ` +
+        `WHERE Account__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
+        `AND Address_Type__c != '${esc(WAREHOUSE_ADDR_TYPE)}' ` +
+        `ORDER BY Name`);
+    res.scanned = rows.length;
+    for (const r of rows) {
+        const label: string = r.Name;
+        const ledger: string = r.Tally_Account__r?.Name || '';
+        if (!ledger) {
+            res.failed++;
+            const msg = `no Tally_Account__c (customer ledger) on this address — cannot place it`;
+            res.errors.push(`${label}: ${msg}`);
+            log(`  customer address '${label}': ${msg}`, true);
+            await logTrigger('SF->Tally CustomerAddress', 'Error', 'Tally_Shipping_Address__c', r.Id, msg);
+            continue;
+        }
+        const address = addressFromSf(r, 'Full_Address__', { gstin: r.Tally_Account__r?.GSTIN__c, addressName: label });
+        if (opts.dryRun) { log(`[dry-run] would set ${r.Address_Type__c} address '${label}' on ledger '${ledger}' (${addressSummary(address)})`); continue; }
+        try {
+            const ok = await setLedgerMultiAddress(server, port, ledger, address, log);
+            if (!ok) { res.failed++; res.errors.push(`${label}: could not set address on ledger '${ledger}'`); await logTrigger('SF->Tally CustomerAddress', 'Error', 'Tally_Shipping_Address__c', r.Id, `ledger '${ledger}'`); continue; }
+            res.pushed++;
+            log(`  ${r.Address_Type__c} address '${label}' -> ledger '${ledger}'`);
+            await logTrigger('SF->Tally CustomerAddress', 'Success', 'Tally_Shipping_Address__c', r.Id, `ledger=${ledger}`);
+        } catch (e: any) {
+            res.failed++; res.errors.push(`${label}: ${e.message}`);
+            await logTrigger('SF->Tally CustomerAddress', 'Error', 'Tally_Shipping_Address__c', r.Id, e.message);
+        }
+    }
+    log(`SF->Tally customer addresses: scanned=${res.scanned} pushed=${res.pushed} failed=${res.failed}`);
     return res;
 }
 
@@ -307,20 +408,28 @@ export async function syncProductsToTally(acct: AccountRef, server: string, port
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
     const fallbackUnit = opts.defaultUnit || 'pcs';
     const rows = await sfQuery(
-        `SELECT Id, Name, SAP_ID__c, Tally_Guid__c, BaseUOM__c, HSN__c, GST_Percentage__c ` +
+        `SELECT Id, Name, SAP_ID__c, Tally_Guid__c, BaseUOM__c, PackType__c, ` +
+        `Category__c, SubCategory__c, HSN__c, GST_Percentage__c ` +
         `FROM Tally_Product__c ` +
         `WHERE Account__c = '${esc(acct.id)}' AND SAP_ID__c != null AND Tally_Guid__c = null ` +
         `ORDER BY Name`);
+    // Stock groups created once per run (Category -> SubCategory), not per product.
+    const groupsDone = new Set<string>();
     res.scanned = rows.length;
     for (const r of rows) {
         const name: string = r.Name;
         const sapId: string = r.SAP_ID__c || '';
-        const unit: string = (r.BaseUOM__c || fallbackUnit).trim() || fallbackUnit;
+        const unit: string = resolveProductUnit(r, fallbackUnit);
         const gstRate: number | undefined = (r.GST_Percentage__c != null) ? Number(r.GST_Percentage__c) : undefined;
         const hsn: string | undefined = r.HSN__c || undefined;
-        if (opts.dryRun) { log(`[dry-run] would push stock item '${name}' (sap='${sapId}', unit='${unit}', gst=${gstRate ?? 'n/a'}, hsn=${hsn ?? 'n/a'})`); continue; }
+        // Category > SubCategory become nested Tally stock groups; the item sits in the deepest one.
+        const category = String(r.Category__c || '').trim();
+        const subCategory = String(r.SubCategory__c || '').trim();
+        const stockGroup = subCategory || category || undefined;
+        if (opts.dryRun) { log(`[dry-run] would push stock item '${name}' (sap='${sapId}', unit='${unit}', group='${stockGroup ?? 'n/a'}', gst=${gstRate ?? 'n/a'}, hsn=${hsn ?? 'n/a'})`); continue; }
         try {
-            const w = await upsertStockItemWithSapId(server, port, name, unit, sapId, { gstRate, hsn, log });
+            await ensureProductStockGroups(server, port, category, subCategory, groupsDone, log);
+            const w = await upsertStockItemWithSapId(server, port, name, unit, sapId, { gstRate, hsn, stockGroup, log });
             if (!w.ok) { res.failed++; res.errors.push(`${name}: ${w.message}`); await logTrigger('SF->Tally Product', 'Error', 'Tally_Product__c', r.Id, w.message); continue; }
             res.pushed++;
             if (w.guid) {

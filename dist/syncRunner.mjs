@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { loadSyncConfigs, resolveAccount, isDue, saveWatermark } from './sfConfig.mjs';
 import { SPECS, syncToSalesforce, syncToTally } from './sfAgent.mjs';
-import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncWarehousesToTally, syncWarehousesToSalesforce, backfillSapIdsToTally } from './sfMaster.mjs';
+import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syncWarehousesToTally, syncWarehousesToSalesforce, syncCustomerAddressesToTally, backfillSapIdsToTally } from './sfMaster.mjs';
 import { syncPricesToTally } from './sfPrice.mjs';
 import { logToTrigger } from './sfLog.mjs';
 /** Masters (Account, Warehouse, then Product) run before transactions. Stable priority sort key. */
@@ -156,6 +156,17 @@ export async function runCycle(opts) {
             catch (e) {
                 log(`[runner] Warehouse SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
                 reports.push({ direction: 'ToTally', objectType: 'Warehouse', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
+            }
+            // Customer ship-to/billing rows live on the SAME Tally_Shipping_Address__c object but are
+            // NOT godowns — they go onto the customer's ledger as addresses. Run them off the same
+            // config so no extra Sync_Config__c row is needed in the org.
+            try {
+                const r = await syncCustomerAddressesToTally(acct, opts.server, opts.port, { dryRun: opts.dryRun, log });
+                reports.push({ direction: 'ToTally', objectType: 'CustomerAddress', ok: r.failed === 0, detail: `scanned ${r.scanned}, pushed ${r.pushed}, failed ${r.failed}` });
+            }
+            catch (e) {
+                log(`[runner] CustomerAddress SF->Tally errored: ${(e === null || e === void 0 ? void 0 : e.message) || e}`, true);
+                reports.push({ direction: 'ToTally', objectType: 'CustomerAddress', ok: false, detail: String((e === null || e === void 0 ? void 0 : e.message) || e) });
             }
             continue;
         }
