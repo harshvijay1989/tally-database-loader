@@ -568,7 +568,14 @@ async function runMapping(name: string, emit: EmitFn): Promise<void> {
 
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
-    const send = (code: number, type: string, body: string) => { res.writeHead(code, { 'Content-Type': type }); res.end(body); };
+    // no-store on every response. The UI is a single HTML file served from disk and replaced by
+    // each connector update; with no cache headers a browser happily keeps the previous version,
+    // so an updated connector shows the OLD page — new server, stale JS, buttons that do nothing.
+    // API replies must not be cached either (status, session, logs are all live).
+    const send = (code: number, type: string, body: string) => {
+        res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store, must-revalidate', 'Pragma': 'no-cache' });
+        res.end(body);
+    };
     const json = (code: number, obj: any) => send(code, 'application/json', JSON.stringify(obj));
 
     try {
