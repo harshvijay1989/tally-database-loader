@@ -13,19 +13,39 @@ function esc(s) {
 }
 function q(s) { return (s || '').replace(/"/g, ''); } // for inside Tally "..." filter literals
 const num = (xml, tag) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
+/** GST registration details. The UI reads these from <LEDGSTREGDETAILS.LIST> (a DATED sub-record,
+ *  like the mailing address) — the flat <PARTYGSTIN> scalar stores but is never shown, which is why
+ *  a ledger could hold a GSTIN that Tally's own GST screens and returns did not see. Confirmed by
+ *  entering GST details in the UI and exporting the ledger back. */
+function ledgerGstXml(gstin, registrationType, stateName, applicableFrom) {
+    if (!gstin && !registrationType)
+        return '';
+    return '<LEDGSTREGDETAILS.LIST>'
+        + `<APPLICABLEFROM>${esc(applicableFrom)}</APPLICABLEFROM>`
+        + `<GSTREGISTRATIONTYPE>${esc(registrationType || 'Regular')}</GSTREGISTRATIONTYPE>`
+        + (stateName ? `<PLACEOFSUPPLY>${esc(stateName)}</PLACEOFSUPPLY>` : '')
+        + (gstin ? `<GSTIN>${esc(gstin)}</GSTIN>` : '')
+        + '<ISOTHTERRITORYASSESSEE>No</ISOTHTERRITORYASSESSEE>'
+        + '</LEDGSTREGDETAILS.LIST>';
+}
 /** The ledger's commercial details block. */
 function ledgerProfileXml(p, ledgerName) {
-    // Party bank details are FLAT scalar tags on the LEDGER — verified against live TallyPrime by
-    // exporting the ledger schema ("List of Accounts"). A <LEDBANKDETAILS.LIST> block is accepted
-    // by the import and SILENTLY DISCARDED, which is what made bank details never appear.
-    // Note: Tally stores ONE bank per party ledger (its own FAQ: "TallyPrime currently does not
-    // support adding details of more than one bank for a party in a party ledger").
+    // Party Bank Details live in <PAYMENTDETAILS.LIST> — confirmed by filling the fields in the
+    // TallyPrime UI and exporting the ledger back ("List of Accounts"). The flat <BANKDETAILS> /
+    // <IFSCODE> / <BANKACCHOLDERNAME> scalars DO store but the UI never reads them, and a
+    // <LEDBANKDETAILS.LIST> block is discarded outright — both look like success and show nothing.
+    // TRANSACTIONNAME names the entry ('Primary'); it is what distinguishes multiple beneficiaries.
     const b = p.bank;
-    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch))
-        ? (b.name ? `<BANKDETAILS>${esc(b.name)}</BANKDETAILS>` : '')
+    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch || b.upi))
+        ? '<PAYMENTDETAILS.LIST>'
+            + `<TRANSACTIONNAME>${esc(b.entryName || 'Primary')}</TRANSACTIONNAME>`
+            + (b.name ? `<BANKNAME>${esc(b.name)}</BANKNAME>` : '')
+            + (b.accountNumber ? `<ACCOUNTNUMBER>${esc(b.accountNumber)}</ACCOUNTNUMBER>` : '')
             + (b.ifsc ? `<IFSCODE>${esc(b.ifsc)}</IFSCODE>` : '')
             + (b.branch ? `<BRANCHNAME>${esc(b.branch)}</BRANCHNAME>` : '')
-            + `<BANKACCHOLDERNAME>${esc(b.holder || ledgerName)}</BANKACCHOLDERNAME>`
+            + (b.upi ? `<VIRTUALPAYMENTADDRESS>${esc(b.upi)}</VIRTUALPAYMENTADDRESS>` : '')
+            + `<PAYMENTFAVOURING>${esc(b.holder || ledgerName)}</PAYMENTFAVOURING>`
+            + '</PAYMENTDETAILS.LIST>'
         : '';
     return (typeof p.creditLimit === 'number' ? `<CREDITLIMIT>${p.creditLimit}</CREDITLIMIT>` : '')
         + (typeof p.creditPeriodDays === 'number' && p.creditPeriodDays > 0 ? `<BILLCREDITPERIOD>${Math.round(p.creditPeriodDays)} Days</BILLCREDITPERIOD>` : '')
@@ -137,7 +157,7 @@ function parseMasterKeys(xml, tag) {
  *  EXISTING ledger (by its current name, resolved from the GUID) and rename it if the desired
  *  name changed, instead of creating a duplicate. Returns the ledger's GUID on success. */
 export async function upsertLedgerWithSapId(server, port, name, parentGroup, sapId, opts = {}) {
-    var _a;
+    var _a, _b, _c, _d;
     const log = opts.log || (() => { });
     // GUID-first identity: if SF already has a GUID, find the ledger's current name by it.
     let currentName = '';
@@ -172,10 +192,13 @@ export async function upsertLedgerWithSapId(server, port, name, parentGroup, sap
     // Commercial details (credit limit/period, PAN, GST reg type, contact, mobile, bank). Emitted on
     // Alter too, so values added in Salesforce later reach a ledger that already exists.
     const profileXml = hasProfile(opts.profile) ? ledgerProfileXml(opts.profile, renameTo || name) : '';
+    // GST registration details, assembled from the address (GSTIN + state) and the profile
+    // (registration type) — they belong together in one dated LEDGSTREGDETAILS record.
+    const gstXml = ledgerGstXml(((_a = opts.address) === null || _a === void 0 ? void 0 : _a.gstin) || '', ((_b = opts.profile) === null || _b === void 0 ? void 0 : _b.gstRegistrationType) || '', ((_c = opts.address) === null || _c === void 0 ? void 0 : _c.state) || '', opts.applicableFrom || '20000401');
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}</LEDGER>`
+        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}${gstXml}</LEDGER>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');
@@ -186,7 +209,7 @@ export async function upsertLedgerWithSapId(server, port, name, parentGroup, sap
         return { ok, created, altered, errors, message: lineErr || 'no change' };
     const finalName = renameTo || name;
     const keys = await readLedgerKeys(server, port, { names: [finalName] });
-    return { ok, created, altered, errors, message: 'ok', guid: ((_a = keys[0]) === null || _a === void 0 ? void 0 : _a.guid) || opts.knownGuid, renamedFrom: renameTo ? currentName : undefined };
+    return { ok, created, altered, errors, message: 'ok', guid: ((_d = keys[0]) === null || _d === void 0 ? void 0 : _d.guid) || opts.knownGuid, renamedFrom: renameTo ? currentName : undefined };
 }
 /** Add/replace ONE named address in a ledger's "multiple addresses" list. This is where a CUSTOMER's
  *  ship-to / billing address belongs — a customer address is NOT a godown (a godown is one of the

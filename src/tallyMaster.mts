@@ -40,22 +40,42 @@ export interface LedgerProfile {
     gstRegistrationType?: string; // -> <GSTREGISTRATIONTYPE> (Regular / Composition / Unregistered ...)
     contactPerson?: string;     // -> <LEDGERCONTACT>
     mobile?: string;            // -> <LEDGERMOBILE>
-    bank?: { name?: string; accountNumber?: string; ifsc?: string; branch?: string; holder?: string };
+    bank?: { name?: string; accountNumber?: string; ifsc?: string; branch?: string; holder?: string; upi?: string; entryName?: string };
+}
+
+/** GST registration details. The UI reads these from <LEDGSTREGDETAILS.LIST> (a DATED sub-record,
+ *  like the mailing address) — the flat <PARTYGSTIN> scalar stores but is never shown, which is why
+ *  a ledger could hold a GSTIN that Tally's own GST screens and returns did not see. Confirmed by
+ *  entering GST details in the UI and exporting the ledger back. */
+function ledgerGstXml(gstin: string, registrationType: string, stateName: string, applicableFrom: string): string {
+    if (!gstin && !registrationType) return '';
+    return '<LEDGSTREGDETAILS.LIST>'
+        + `<APPLICABLEFROM>${esc(applicableFrom)}</APPLICABLEFROM>`
+        + `<GSTREGISTRATIONTYPE>${esc(registrationType || 'Regular')}</GSTREGISTRATIONTYPE>`
+        + (stateName ? `<PLACEOFSUPPLY>${esc(stateName)}</PLACEOFSUPPLY>` : '')
+        + (gstin ? `<GSTIN>${esc(gstin)}</GSTIN>` : '')
+        + '<ISOTHTERRITORYASSESSEE>No</ISOTHTERRITORYASSESSEE>'
+        + '</LEDGSTREGDETAILS.LIST>';
 }
 
 /** The ledger's commercial details block. */
 function ledgerProfileXml(p: LedgerProfile, ledgerName: string): string {
-    // Party bank details are FLAT scalar tags on the LEDGER — verified against live TallyPrime by
-    // exporting the ledger schema ("List of Accounts"). A <LEDBANKDETAILS.LIST> block is accepted
-    // by the import and SILENTLY DISCARDED, which is what made bank details never appear.
-    // Note: Tally stores ONE bank per party ledger (its own FAQ: "TallyPrime currently does not
-    // support adding details of more than one bank for a party in a party ledger").
+    // Party Bank Details live in <PAYMENTDETAILS.LIST> — confirmed by filling the fields in the
+    // TallyPrime UI and exporting the ledger back ("List of Accounts"). The flat <BANKDETAILS> /
+    // <IFSCODE> / <BANKACCHOLDERNAME> scalars DO store but the UI never reads them, and a
+    // <LEDBANKDETAILS.LIST> block is discarded outright — both look like success and show nothing.
+    // TRANSACTIONNAME names the entry ('Primary'); it is what distinguishes multiple beneficiaries.
     const b = p.bank;
-    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch))
-        ? (b.name ? `<BANKDETAILS>${esc(b.name)}</BANKDETAILS>` : '')
+    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch || b.upi))
+        ? '<PAYMENTDETAILS.LIST>'
+        + `<TRANSACTIONNAME>${esc(b.entryName || 'Primary')}</TRANSACTIONNAME>`
+        + (b.name ? `<BANKNAME>${esc(b.name)}</BANKNAME>` : '')
+        + (b.accountNumber ? `<ACCOUNTNUMBER>${esc(b.accountNumber)}</ACCOUNTNUMBER>` : '')
         + (b.ifsc ? `<IFSCODE>${esc(b.ifsc)}</IFSCODE>` : '')
         + (b.branch ? `<BRANCHNAME>${esc(b.branch)}</BRANCHNAME>` : '')
-        + `<BANKACCHOLDERNAME>${esc(b.holder || ledgerName)}</BANKACCHOLDERNAME>`
+        + (b.upi ? `<VIRTUALPAYMENTADDRESS>${esc(b.upi)}</VIRTUALPAYMENTADDRESS>` : '')
+        + `<PAYMENTFAVOURING>${esc(b.holder || ledgerName)}</PAYMENTFAVOURING>`
+        + '</PAYMENTDETAILS.LIST>'
         : '';
     return (typeof p.creditLimit === 'number' ? `<CREDITLIMIT>${p.creditLimit}</CREDITLIMIT>` : '')
         + (typeof p.creditPeriodDays === 'number' && p.creditPeriodDays > 0 ? `<BILLCREDITPERIOD>${Math.round(p.creditPeriodDays)} Days</BILLCREDITPERIOD>` : '')
@@ -212,10 +232,15 @@ export async function upsertLedgerWithSapId(
     // Commercial details (credit limit/period, PAN, GST reg type, contact, mobile, bank). Emitted on
     // Alter too, so values added in Salesforce later reach a ledger that already exists.
     const profileXml = hasProfile(opts.profile) ? ledgerProfileXml(opts.profile!, renameTo || name) : '';
+    // GST registration details, assembled from the address (GSTIN + state) and the profile
+    // (registration type) — they belong together in one dated LEDGSTREGDETAILS record.
+    const gstXml = ledgerGstXml(
+        opts.address?.gstin || '', opts.profile?.gstRegistrationType || '',
+        opts.address?.state || '', opts.applicableFrom || '20000401');
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}</LEDGER>`
+        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}${gstXml}</LEDGER>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');
