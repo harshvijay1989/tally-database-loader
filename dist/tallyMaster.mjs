@@ -13,6 +13,29 @@ function esc(s) {
 }
 function q(s) { return (s || '').replace(/"/g, ''); } // for inside Tally "..." filter literals
 const num = (xml, tag) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
+/** The ledger's commercial details block. */
+function ledgerProfileXml(p, ledgerName) {
+    const b = p.bank;
+    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch))
+        ? '<LEDBANKDETAILS.LIST>'
+            + (b.name ? `<BANKNAME>${esc(b.name)}</BANKNAME>` : '')
+            + (b.accountNumber ? `<ACCOUNTNUMBER>${esc(b.accountNumber)}</ACCOUNTNUMBER>` : '')
+            + (b.ifsc ? `<IFSCODE>${esc(b.ifsc)}</IFSCODE>` : '')
+            + (b.branch ? `<BRANCHNAME>${esc(b.branch)}</BRANCHNAME>` : '')
+            + `<ACCHOLDERNAME>${esc(b.holder || ledgerName)}</ACCHOLDERNAME>`
+            + '</LEDBANKDETAILS.LIST>'
+        : '';
+    return (typeof p.creditLimit === 'number' ? `<CREDITLIMIT>${p.creditLimit}</CREDITLIMIT>` : '')
+        + (typeof p.creditPeriodDays === 'number' && p.creditPeriodDays > 0 ? `<BILLCREDITPERIOD>${Math.round(p.creditPeriodDays)} Days</BILLCREDITPERIOD>` : '')
+        + (p.pan ? `<INCOMETAXNUMBER>${esc(p.pan)}</INCOMETAXNUMBER>` : '')
+        + (p.gstRegistrationType ? `<GSTREGISTRATIONTYPE>${esc(p.gstRegistrationType)}</GSTREGISTRATIONTYPE>` : '')
+        + (p.contactPerson ? `<LEDGERCONTACT>${esc(p.contactPerson)}</LEDGERCONTACT>` : '')
+        + (p.mobile ? `<LEDGERMOBILE>${esc(p.mobile)}</LEDGERMOBILE>` : '')
+        + bankXml;
+}
+const hasProfile = (p) => !!p && (typeof p.creditLimit === 'number' || typeof p.creditPeriodDays === 'number' || !!p.pan
+    || !!p.gstRegistrationType || !!p.contactPerson || !!p.mobile
+    || !!(p.bank && (p.bank.name || p.bank.accountNumber || p.bank.ifsc || p.bank.branch)));
 const hasAddr = (a) => !!a && !!((a.lines && a.lines.filter(Boolean).length) || a.city || a.state || a.pincode || a.gstin || a.phone || a.email);
 /** The <ADDRESS.LIST> block (street lines plus a trailing "City Pincode" line when present). */
 function addressLinesXml(a) {
@@ -144,10 +167,13 @@ export async function upsertLedgerWithSapId(server, port, name, parentGroup, sap
     // Create so an address added or corrected in Salesforce reaches an already-synced ledger.
     const addrXml = hasAddr(opts.address)
         ? ledgerMailingXml(opts.address, renameTo || name, opts.applicableFrom || '20000401') : '';
+    // Commercial details (credit limit/period, PAN, GST reg type, contact, mobile, bank). Emitted on
+    // Alter too, so values added in Salesforce later reach a ledger that already exists.
+    const profileXml = hasProfile(opts.profile) ? ledgerProfileXml(opts.profile, renameTo || name) : '';
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}</LEDGER>`
+        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}</LEDGER>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');

@@ -2,7 +2,7 @@ import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger, type VoucherInput } from './tallyImport.mjs';
 import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId, type TallyAddress } from './tallyMaster.mjs';
-import { addressFromSf, resolveProductUnit, ensureProductStockGroups } from './sfMaster.mjs';
+import { addressFromSf, ledgerProfileFromSf, resolveProductUnit, ensureProductStockGroups } from './sfMaster.mjs';
 import { loadOrgMapping, orgMappingSourceFields, buildMappedRecord } from './sfOrgMapping.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates, type GstLedgerConfig } from './gst.mjs';
 import { stateNameFromCode, canonStateCode } from './stateCodes.mjs';
@@ -464,13 +464,14 @@ async function ensurePartyLedgerRich(acct: AccountRef, server: string, port: num
         const rows = await sfQuery(
             `SELECT Id, SAP_ID__c, Account_Group__c, Tally_Guid__c, ` +
             `BillingAddress__Street__s, BillingAddress__City__s, BillingAddress__PostalCode__s, ` +
-            `BillingAddress__StateCode__s, GSTIN__c, Phone__c, Email__c, Mailing_Name__c ` +
+            `BillingAddress__StateCode__s, GSTIN__c, Phone__c, Email__c, Mailing_Name__c, ` +
+            `Credit_Limit__c, Credit_Period_Days__c, PAN__c, GST_Registration_Type__c, Primary_Contact__r.Name ` +
             `FROM Tally_Account__c ` +
             `WHERE Distributor__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(partyName)}' LIMIT 1`);
         const r = rows[0];
         if (r && r.SAP_ID__c) {
             const address = addressFromSf(r, 'BillingAddress__', { gstin: r.GSTIN__c, phone: r.Phone__c, email: r.Email__c, mailingName: r.Mailing_Name__c });
-            const w = await upsertLedgerWithSapId(server, port, partyName, r.Account_Group__c || fallbackGroup, r.SAP_ID__c, { knownGuid: r.Tally_Guid__c || undefined, address, log });
+            const w = await upsertLedgerWithSapId(server, port, partyName, r.Account_Group__c || fallbackGroup, r.SAP_ID__c, { knownGuid: r.Tally_Guid__c || undefined, address, profile: ledgerProfileFromSf(r), log });
             if (w.ok) {
                 log(`  party ledger '${partyName}' created from SF (sap=${r.SAP_ID__c}, group=${r.Account_Group__c || fallbackGroup})`);
                 if (w.guid && w.guid !== r.Tally_Guid__c) await sfUpdate('Tally_Account__c', r.Id, { Tally_Guid__c: w.guid }).catch(() => { });

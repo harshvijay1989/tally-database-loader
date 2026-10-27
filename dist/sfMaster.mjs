@@ -20,6 +20,27 @@ export function addressFromSf(row, prefix, extra = {}) {
         addressName: (extra.addressName || '').trim() || undefined,
     };
 }
+/** Build a ledger's commercial details from a Tally_Account__c row. Bank details are read from the
+ *  bridge when present (Bank_* fields); they are absent on older orgs, in which case no bank block
+ *  is sent rather than guessing. */
+export function ledgerProfileFromSf(row) {
+    var _a;
+    const n = (v) => (v == null || v === '') ? undefined : Number(v);
+    const s = (v) => { const t = String(v == null ? '' : v).trim(); return t || undefined; };
+    const bank = {
+        name: s(row.Bank_Name__c), accountNumber: s(row.Bank_Account_Number__c),
+        ifsc: s(row.IFSC_Code__c), branch: s(row.Bank_Branch__c),
+    };
+    return {
+        creditLimit: n(row.Credit_Limit__c),
+        creditPeriodDays: n(row.Credit_Period_Days__c),
+        pan: s(row.PAN__c),
+        gstRegistrationType: s(row.GST_Registration_Type__c),
+        contactPerson: s((_a = row.Primary_Contact__r) === null || _a === void 0 ? void 0 : _a.Name),
+        mobile: s(row.Phone__c),
+        ...((bank.name || bank.accountNumber || bank.ifsc || bank.branch) ? { bank } : {}),
+    };
+}
 /** One-line description of an address, for dry-run/log output. */
 export function addressSummary(a) {
     return [...(a.lines || []), a.city, a.state, a.pincode].filter(Boolean).join(', ') || '(none)';
@@ -67,6 +88,7 @@ async function logTrigger(op, status, objectName, relId, message) {
  *  create/alter the ledger carrying that SAP Id and copy the real Tally GUID back. Selection is by
  *  DATA STATE (GUID blank + SAP present), not by Sync_Status__c -- the org owns that picklist. */
 export async function syncAccountsToTally(acct, server, port, opts = {}) {
+    var _a;
     const log = opts.log || (() => { });
     const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
     // The business/org creates the row with Sync_Status__c = 'To Tally'; we send it when it also
@@ -77,7 +99,10 @@ export async function syncAccountsToTally(acct, server, port, opts = {}) {
         // address-less (the org holds the full address on Tally_Account__c; we simply never sent it).
         `BillingAddress__Street__s, BillingAddress__City__s, BillingAddress__PostalCode__s, ` +
         `BillingAddress__StateCode__s, BillingAddress__CountryCode__s, ` +
-        `GSTIN__c, Phone__c, Email__c, Mailing_Name__c ` +
+        `GSTIN__c, Phone__c, Email__c, Mailing_Name__c, ` +
+        // Commercial details — present on Tally_Account__c and already populated by the org's own
+        // mapping, but never sent to Tally until now.
+        `Credit_Limit__c, Credit_Period_Days__c, PAN__c, GST_Registration_Type__c, Primary_Contact__r.Name ` +
         `FROM Tally_Account__c ` +
         `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
         `AND SAP_ID__c != null AND Tally_Guid__c = null ` +
@@ -88,12 +113,13 @@ export async function syncAccountsToTally(acct, server, port, opts = {}) {
         const sapId = r.SAP_ID__c || '';
         const group = r.Account_Group__c || DEFAULT_DEBTOR_GROUP;
         const address = addressFromSf(r, 'BillingAddress__', { gstin: r.GSTIN__c, phone: r.Phone__c, email: r.Email__c, mailingName: r.Mailing_Name__c });
+        const profile = ledgerProfileFromSf(r);
         if (opts.dryRun) {
-            log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}', address='${addressSummary(address)}')`);
+            log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}', address='${addressSummary(address)}', creditLimit=${(_a = profile.creditLimit) !== null && _a !== void 0 ? _a : 'n/a'}, pan=${profile.pan || 'n/a'})`);
             continue;
         }
         try {
-            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log, address });
+            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log, address, profile });
             if (!w.ok) {
                 res.failed++;
                 res.errors.push(`${name}: ${w.message}`);

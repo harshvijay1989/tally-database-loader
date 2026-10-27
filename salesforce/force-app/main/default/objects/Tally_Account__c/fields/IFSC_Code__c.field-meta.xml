@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>IFSC_Code__c</fullName>
+    <label>IFSC Code</label>
+    <length>20</length>
+    <type>Text</type>
+    <required>false</required>
+    <externalId>false</externalId>
+    <unique>false</unique>
+    <description>Customer's bank IFSC code. Mapped from Account.IFSC_Code__c; sent to the Tally ledger as LEDBANKDETAILS.LIST/IFSCODE.</description>
+</CustomField>

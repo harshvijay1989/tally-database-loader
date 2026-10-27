@@ -1317,4 +1317,24 @@
         <tab>Tally_Purchase_Order_Line__c</tab>
         <visibility>Visible</visibility>
     </tabSettings>
+    <fieldPermissions>
+        <field>Tally_Account__c.Bank_Name__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Account__c.Bank_Account_Number__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Account__c.IFSC_Code__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <field>Tally_Account__c.Bank_Branch__c</field>
+        <readable>true</readable>
+        <editable>true</editable>
+    </fieldPermissions>
 </PermissionSet>

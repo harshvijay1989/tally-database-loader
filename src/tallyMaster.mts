@@ -30,6 +30,45 @@ export interface TallyAddress {
     addressName?: string; // multi-address entries only: the label shown in Tally's address list
 }
 
+/** Commercial/identity details that live on a Tally ledger alongside the address. All optional —
+ *  each tag is emitted only when we have a value, so a ledger with none is byte-identical to before.
+ *  Tag names verified against live TallyPrime (a wrong tag is accepted and silently ignored). */
+export interface LedgerProfile {
+    creditLimit?: number;       // -> <CREDITLIMIT>
+    creditPeriodDays?: number;  // -> <BILLCREDITPERIOD> ('30 Days')
+    pan?: string;               // -> <INCOMETAXNUMBER>
+    gstRegistrationType?: string; // -> <GSTREGISTRATIONTYPE> (Regular / Composition / Unregistered ...)
+    contactPerson?: string;     // -> <LEDGERCONTACT>
+    mobile?: string;            // -> <LEDGERMOBILE>
+    bank?: { name?: string; accountNumber?: string; ifsc?: string; branch?: string; holder?: string };
+}
+
+/** The ledger's commercial details block. */
+function ledgerProfileXml(p: LedgerProfile, ledgerName: string): string {
+    const b = p.bank;
+    const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch))
+        ? '<LEDBANKDETAILS.LIST>'
+        + (b.name ? `<BANKNAME>${esc(b.name)}</BANKNAME>` : '')
+        + (b.accountNumber ? `<ACCOUNTNUMBER>${esc(b.accountNumber)}</ACCOUNTNUMBER>` : '')
+        + (b.ifsc ? `<IFSCODE>${esc(b.ifsc)}</IFSCODE>` : '')
+        + (b.branch ? `<BRANCHNAME>${esc(b.branch)}</BRANCHNAME>` : '')
+        + `<ACCHOLDERNAME>${esc(b.holder || ledgerName)}</ACCHOLDERNAME>`
+        + '</LEDBANKDETAILS.LIST>'
+        : '';
+    return (typeof p.creditLimit === 'number' ? `<CREDITLIMIT>${p.creditLimit}</CREDITLIMIT>` : '')
+        + (typeof p.creditPeriodDays === 'number' && p.creditPeriodDays > 0 ? `<BILLCREDITPERIOD>${Math.round(p.creditPeriodDays)} Days</BILLCREDITPERIOD>` : '')
+        + (p.pan ? `<INCOMETAXNUMBER>${esc(p.pan)}</INCOMETAXNUMBER>` : '')
+        + (p.gstRegistrationType ? `<GSTREGISTRATIONTYPE>${esc(p.gstRegistrationType)}</GSTREGISTRATIONTYPE>` : '')
+        + (p.contactPerson ? `<LEDGERCONTACT>${esc(p.contactPerson)}</LEDGERCONTACT>` : '')
+        + (p.mobile ? `<LEDGERMOBILE>${esc(p.mobile)}</LEDGERMOBILE>` : '')
+        + bankXml;
+}
+
+const hasProfile = (p?: LedgerProfile) =>
+    !!p && (typeof p.creditLimit === 'number' || typeof p.creditPeriodDays === 'number' || !!p.pan
+        || !!p.gstRegistrationType || !!p.contactPerson || !!p.mobile
+        || !!(p.bank && (p.bank.name || p.bank.accountNumber || p.bank.ifsc || p.bank.branch)));
+
 const hasAddr = (a?: TallyAddress) =>
     !!a && !!((a.lines && a.lines.filter(Boolean).length) || a.city || a.state || a.pincode || a.gstin || a.phone || a.email);
 
@@ -140,7 +179,7 @@ function parseMasterKeys(xml: string, tag: string): MasterKey[] {
  *  name changed, instead of creating a duplicate. Returns the ledger's GUID on success. */
 export async function upsertLedgerWithSapId(
     server: string, port: number, name: string, parentGroup: string, sapId: string,
-    opts: { knownGuid?: string; address?: TallyAddress; applicableFrom?: string; log?: (m: string, e?: boolean) => void } = {},
+    opts: { knownGuid?: string; address?: TallyAddress; profile?: LedgerProfile; applicableFrom?: string; log?: (m: string, e?: boolean) => void } = {},
 ): Promise<MasterWriteResult> {
     const log = opts.log || (() => { });
     // GUID-first identity: if SF already has a GUID, find the ledger's current name by it.
@@ -168,10 +207,13 @@ export async function upsertLedgerWithSapId(
     // Create so an address added or corrected in Salesforce reaches an already-synced ledger.
     const addrXml = hasAddr(opts.address)
         ? ledgerMailingXml(opts.address!, renameTo || name, opts.applicableFrom || '20000401') : '';
+    // Commercial details (credit limit/period, PAN, GST reg type, contact, mobile, bank). Emitted on
+    // Alter too, so values added in Salesforce later reach a ledger that already exists.
+    const profileXml = hasProfile(opts.profile) ? ledgerProfileXml(opts.profile!, renameTo || name) : '';
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
-        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}</LEDGER>`
+        + `<LEDGER NAME="${esc(identityName)}" ACTION="${action}">${nameListXml}${parentXml}${sapXml}${addrXml}${profileXml}</LEDGER>`
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const created = num(resp, 'CREATED'), altered = num(resp, 'ALTERED'), errors = num(resp, 'ERRORS') + num(resp, 'EXCEPTIONS');

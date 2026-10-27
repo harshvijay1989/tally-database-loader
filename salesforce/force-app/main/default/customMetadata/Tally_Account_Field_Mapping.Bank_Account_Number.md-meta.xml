@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <label>Bank Account Number</label>
+    <protected>false</protected>
+    <values>
+        <field>Active__c</field>
+        <value xsi:type="xsd:boolean">true</value>
+    </values>
+    <values>
+        <field>Source_Object__c</field>
+        <value xsi:type="xsd:string">Account</value>
+    </values>
+    <values>
+        <field>Target_Object__c</field>
+        <value xsi:type="xsd:string">Tally_Account__c</value>
+    </values>
+    <values>
+        <field>Source_Field__c</field>
+        <value xsi:type="xsd:string">AccountNumber__c</value>
+    </values>
+    <values>
+        <field>Target_Field__c</field>
+        <value xsi:type="xsd:string">Bank_Account_Number__c</value>
+    </values>
+    <values>
+        <field>Value_Type__c</field>
+        <value xsi:type="xsd:string">FIELD</value>
+    </values>
+    <values>
+        <field>Sequence__c</field>
+        <value xsi:type="xsd:double">31</value>
+    </values>
+</CustomMetadata>

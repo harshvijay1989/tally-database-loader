@@ -1,6 +1,6 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { AccountRef } from './sfConfig.mjs';
-import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, ensureStockGroup, setLedgerMultiAddress, tallyUnitSymbol, MasterKey, TallyAddress } from './tallyMaster.mjs';
+import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, ensureStockGroup, setLedgerMultiAddress, tallyUnitSymbol, MasterKey, TallyAddress, LedgerProfile } from './tallyMaster.mjs';
 import { resolveStateCode, stateNameFromCode } from './stateCodes.mjs';
 
 /** Build a TallyAddress from a Salesforce compound-address field set (e.g. 'BillingAddress__' on
@@ -21,6 +21,27 @@ export function addressFromSf(row: Record<string, any>, prefix: string,
         email: (extra.email || '').trim() || undefined,
         mailingName: (extra.mailingName || '').trim() || undefined,
         addressName: (extra.addressName || '').trim() || undefined,
+    };
+}
+
+/** Build a ledger's commercial details from a Tally_Account__c row. Bank details are read from the
+ *  bridge when present (Bank_* fields); they are absent on older orgs, in which case no bank block
+ *  is sent rather than guessing. */
+export function ledgerProfileFromSf(row: Record<string, any>): LedgerProfile {
+    const n = (v: any) => (v == null || v === '') ? undefined : Number(v);
+    const s = (v: any) => { const t = String(v == null ? '' : v).trim(); return t || undefined; };
+    const bank = {
+        name: s(row.Bank_Name__c), accountNumber: s(row.Bank_Account_Number__c),
+        ifsc: s(row.IFSC_Code__c), branch: s(row.Bank_Branch__c),
+    };
+    return {
+        creditLimit: n(row.Credit_Limit__c),
+        creditPeriodDays: n(row.Credit_Period_Days__c),
+        pan: s(row.PAN__c),
+        gstRegistrationType: s(row.GST_Registration_Type__c),
+        contactPerson: s(row.Primary_Contact__r?.Name),
+        mobile: s(row.Phone__c),
+        ...((bank.name || bank.accountNumber || bank.ifsc || bank.branch) ? { bank } : {}),
     };
 }
 
@@ -104,7 +125,10 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
         // address-less (the org holds the full address on Tally_Account__c; we simply never sent it).
         `BillingAddress__Street__s, BillingAddress__City__s, BillingAddress__PostalCode__s, ` +
         `BillingAddress__StateCode__s, BillingAddress__CountryCode__s, ` +
-        `GSTIN__c, Phone__c, Email__c, Mailing_Name__c ` +
+        `GSTIN__c, Phone__c, Email__c, Mailing_Name__c, ` +
+        // Commercial details — present on Tally_Account__c and already populated by the org's own
+        // mapping, but never sent to Tally until now.
+        `Credit_Limit__c, Credit_Period_Days__c, PAN__c, GST_Registration_Type__c, Primary_Contact__r.Name ` +
         `FROM Tally_Account__c ` +
         `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
         `AND SAP_ID__c != null AND Tally_Guid__c = null ` +
@@ -115,9 +139,10 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
         const sapId: string = r.SAP_ID__c || '';
         const group: string = r.Account_Group__c || DEFAULT_DEBTOR_GROUP;
         const address = addressFromSf(r, 'BillingAddress__', { gstin: r.GSTIN__c, phone: r.Phone__c, email: r.Email__c, mailingName: r.Mailing_Name__c });
-        if (opts.dryRun) { log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}', address='${addressSummary(address)}')`); continue; }
+        const profile = ledgerProfileFromSf(r);
+        if (opts.dryRun) { log(`[dry-run] would push ledger '${name}' (sap='${sapId}', group='${group}', address='${addressSummary(address)}', creditLimit=${profile.creditLimit ?? 'n/a'}, pan=${profile.pan || 'n/a'})`); continue; }
         try {
-            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log, address });
+            const w = await upsertLedgerWithSapId(server, port, name, group, sapId, { log, address, profile });
             if (!w.ok) { res.failed++; res.errors.push(`${name}: ${w.message}`); await logTrigger('SF->Tally Account', 'Error', 'Tally_Account__c', r.Id, w.message); continue; }
             res.pushed++;
             if (w.guid) {
