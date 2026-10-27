@@ -516,6 +516,17 @@ const godownsEnsured = new Set<string>();
 /** A stock item's BASE UNIT as Tally holds it, cached per process ('' when unknown).
  *  Tally is the authority: a voucher line quoting any other unit has its quantity discarded. */
 const itemBaseUnit = new Map<string, string>();
+/** Prime the base-unit cache from the reverse map we already load once per cycle, so the unit
+ *  check costs ZERO extra Tally round-trips for items that already exist. Only an item created
+ *  on demand during this run still needs its own lookup. Fewer round-trips matters: Tally is
+ *  single-threaded and a burst is what leaves it unresponsive (see postTallyXml pacing). */
+function seedItemBaseUnits(itemBySap: Map<string, { name: string; unit: string }>): void {
+    for (const v of itemBySap.values()) {
+        const k = (v.name || '').trim().toLowerCase();
+        if (k && v.unit && !itemBaseUnit.has(k)) itemBaseUnit.set(k, v.unit);
+    }
+}
+
 async function stockItemBaseUnit(server: string, port: number, itemName: string): Promise<string> {
     const key = itemName.trim().toLowerCase();
     if (!key) return '';
@@ -759,6 +770,7 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     // Load line items for these headers (grouped by parent) + the reverse product map.
     const linesByParent = await loadPendingLines(spec, rows.map(r => r.Id), acct.sapId, log);
     const itemBySap = spec.lineObject ? await loadStockItemBySap(server, port, acct.sapId, log) : new Map();
+    seedItemBaseUnits(itemBySap);   // base units come free from the map we just read
     // Resolve the company's default godown ONCE per run. Non-empty only when multi-godown is enabled
     // (Tally then rejects any inventory line with no allocation); '' leaves single-location companies
     // byte-identical. Only relevant for inventory vouchers (those with line items).
@@ -883,7 +895,7 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
                 if (masterErr) break;
                 const lineUnit = tallyUnitSymbol(inv.unit);
                 if (!lineUnit) { masterErr = `line '${inv.stockItem}' has no unit`; break; }
-                const baseUnit = await stockItemBaseUnit(server, port, inv.stockItem);
+                const baseUnit = await stockItemBaseUnit(server, port, inv.stockItem);   // cache-first; see seedItemBaseUnits
                 if (!baseUnit) { masterErr = `stock item '${inv.stockItem}' has no base unit in Tally`; break; }
                 if (lineUnit.toLowerCase() !== baseUnit.toLowerCase()) {
                     masterErr = `line '${inv.stockItem}': the order is in '${lineUnit}' but the Tally stock item is held in '${baseUnit}'. `
