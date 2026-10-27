@@ -95,6 +95,27 @@ ok('E5 unknown object type -> error', typeof assembleVoucher('Nonsense', { party
 { const v = assembleVoucher('Invoice', { party: 'C', date: '20170801', number: 'I', amount: 1000 }, [], itemBySap, undefined);
   ok('E6 no-line invoice = 2-line accounting', typeof v === 'object' && v.entries.length === 2 && !v.inventoryEntries); }
 
+// Line data quality. A stock line with no quantity/rate used to post to Tally as 0.00 @ 0.00
+// carrying a real amount (seen live on ORD-000173/174: qty blank, rate blank, amount 4446.12).
+const bad = (o) => assembleVoucher('Order', { party: 'C', date: '20170801' }, [L(o)], itemBySap);
+ok('E7  null qty -> error',            typeof bad({ qty: null }) === 'string');
+ok('E8  empty-string qty -> error',    typeof bad({ qty: '' }) === 'string');
+ok('E9  zero qty -> error',            typeof bad({ qty: 0 }) === 'string');
+ok('E10 non-numeric qty -> error',     typeof bad({ qty: 'abc' }) === 'string');
+ok('E11 null rate -> error',           typeof bad({ rate: null }) === 'string');
+ok('E12 empty-string rate -> error',   typeof bad({ rate: '' }) === 'string');
+ok('E13 null amount -> error',         typeof bad({ amount: null }) === 'string');
+ok('E14 zero rate with amount -> error', typeof bad({ rate: 0, amount: 1000 }) === 'string');
+// Free goods: a zero-rate/zero-amount line is fine ALONGSIDE paid lines. (A voucher whose whole
+// total is zero is rejected separately - see E3 - so the free line must not be the only one.)
+ok('E15 zero rate and zero amount line is allowed beside a paid line',
+   typeof assembleVoucher('Order', { party: 'C', date: '20170801' },
+     [L({}), L({ rate: 0, amount: 0 })], itemBySap) === 'object');
+ok('E16 the real ORD-000173 shape is rejected',
+   typeof assembleVoucher('Order', { party: 'C', date: '20170801' },
+     [L({ qty: null, rate: null, amount: 4446.12, unit: '' })], itemBySap) === 'string');
+ok('E17 a good line still posts', typeof bad({}) === 'object');
+
 console.log('== F. buildVoucherImportXml ==');
 { const v = assembleVoucher('Invoice', { party: 'C', date: '20170801', number: 'I' }, [L()], itemBySap, { rateBySap: rate18, intra: true, cfg }, { headerGodown: 'North' });
   const xml = buildVoucherImportXml(v);

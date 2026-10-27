@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId, upsertGodown } from './tallyMaster.mjs';
+import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId, upsertGodown, currentCompanyGuid, isGuidForCompany } from './tallyMaster.mjs';
 import { addressFromSf, ledgerProfileFromSf, resolveProductUnit, ensureProductStockGroups } from './sfMaster.mjs';
 import { loadOrgMapping, orgMappingSourceFields, buildMappedRecord } from './sfOrgMapping.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
@@ -257,8 +257,25 @@ export function assembleVoucher(objectType, logical, lines, itemBySap, gst, extr
         const stockItem = resolved ? resolved.name : String(ln.stockItem || '');
         if (!stockItem)
             return `line has no resolvable stock item (SAP Id '${ln.productSapId || ''}' not found, no name)`;
+        // DATA QUALITY. A stock line must actually describe goods. These were previously unchecked,
+        // so a line with a blank Quantity__c/Rate__c became qty 0.00 @ rate 0.00 carrying a real
+        // amount, and Tally accepted the nonsense — observed live on ORD-000173/ORD-000174
+        // (qty blank, rate blank, amount 4446.12). Fail the voucher with a clear reason instead,
+        // so the staging row shows what to fix rather than quietly posting a broken order.
+        if (ln.qty == null || ln.qty === '' || !isFinite(num(ln.qty)))
+            return `line '${stockItem}' has no quantity`;
+        if (num(ln.qty) === 0)
+            return `line '${stockItem}' has zero quantity`;
+        if (ln.rate == null || ln.rate === '' || !isFinite(num(ln.rate)))
+            return `line '${stockItem}' has no rate`;
+        if (ln.amount == null || ln.amount === '' || !isFinite(num(ln.amount)))
+            return `line '${stockItem}' has no amount`;
         const qty = Math.abs(num(ln.qty));
         const amt = Math.abs(num(ln.amount));
+        // A zero rate is legitimate ONLY for a zero-value line (free goods); a rate of zero against
+        // a real amount means the rate never made it across.
+        if (num(ln.rate) === 0 && amt !== 0)
+            return `line '${stockItem}' has a zero rate but a non-zero amount (${amt})`;
         const unit = String(ln.unit || (resolved ? resolved.unit : '') || '');
         lineTotal += amt;
         if (gst)
@@ -634,6 +651,9 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
     // (Tally then rejects any inventory line with no allocation); '' leaves single-location companies
     // byte-identical. Only relevant for inventory vouchers (those with line items).
     const defaultGodown = spec.lineObject ? await resolveDefaultGodown(server, port) : '';
+    // Which Tally company we are talking to — used to tell a GUID of OURS from one written
+    // against a different company (see the idempotency guard below).
+    const companyGuid = await currentCompanyGuid(server, port);
     if (defaultGodown)
         log(`[agent] multi-godown company — defaulting un-godowned lines to '${defaultGodown}'`);
     // GST context (per distributor): ledger names + product rates + state codes for intra/inter.
@@ -702,7 +722,15 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         // its voucher exists and must never be posted again: re-posting is what produced duplicate
         // orders with doubled quantities. Re-processing can happen whenever a Done row is flipped
         // back to Pending (a retry, a manual reset, an org automation).
-        const existingGuid = String(row[spec.externalId] || '').trim();
+        // ...but only when that GUID belongs to THIS Tally company. A GUID is '<companyGuid>-<n>',
+        // so one written against a different company (a rebuilt Tally file, a new financial-year
+        // company, a test company) points at a voucher that does not exist here — skipping on it
+        // would silently drop a real order. Such a row is treated as never posted.
+        const existingGuid = isGuidForCompany(String(row[spec.externalId] || ''), companyGuid)
+            ? String(row[spec.externalId] || '').trim() : '';
+        const staleGuid = !existingGuid && String(row[spec.externalId] || '').trim();
+        if (staleGuid)
+            log(`  ${row.Id}: GUID ${staleGuid} belongs to another Tally company — posting fresh`);
         if (existingGuid) {
             log(`  ${row.Id}: already posted to Tally (guid ${existingGuid}) — skipping to avoid a duplicate voucher`);
             if (!opts.dryRun)

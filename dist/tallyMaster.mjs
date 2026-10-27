@@ -474,6 +474,39 @@ export async function unitExists(server, port, symbol) {
     catch { /* treat as absent */ }
     return false;
 }
+/** The open company's own GUID. Every master/voucher GUID in Tally is '<companyGuid>-<serial>', so
+ *  this is the prefix that says which COMPANY a stored GUID belongs to. Cached per process. */
+let _companyGuid = null;
+export async function currentCompanyGuid(server, port) {
+    if (_companyGuid !== null)
+        return _companyGuid;
+    const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeCmpGuid</ID></HEADER>'
+        + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>'
+        + '<TDL><TDLMESSAGE><COLLECTION NAME="MordeCmpGuid" ISMODIFY="No" ISINITIALIZE="Yes">'
+        + '<TYPE>Company</TYPE><COMPUTE>CG : $Guid</COMPUTE></COLLECTION></TDLMESSAGE></TDL>'
+        + '</DESC></BODY></ENVELOPE>';
+    try {
+        const resp = await postTallyXml(server, port, xml, 20000);
+        _companyGuid = ((resp.match(/<CG[^>]*>([^<]*)<\/CG>/i) || [])[1] || '').trim();
+    }
+    catch {
+        _companyGuid = '';
+    }
+    return _companyGuid;
+}
+/** Does a stored Tally GUID belong to the company we are currently talking to?
+ *  A GUID from ANOTHER company means the record was synced to a different Tally file, so whatever
+ *  it points at does not exist here — it must be treated as NOT synced, or the record looks done
+ *  while its ledger/item/godown/voucher is absent. With no company GUID available we cannot judge,
+ *  so we trust the GUID (preserves previous behaviour rather than re-creating masters blindly). */
+export function isGuidForCompany(guid, companyGuid) {
+    const g = (guid || '').trim();
+    if (!g)
+        return false;
+    if (!companyGuid)
+        return true;
+    return g.toLowerCase().startsWith(companyGuid.toLowerCase());
+}
 /** Tally simple-unit symbols reject spaces and slashes (a descriptive UOM like "Carton Box" or a
  *  symbol like "C/B" fails as "BAD UNIT NAME"). Reduce any UOM to a Tally-valid alphanumeric symbol
  *  (letters/digits/%); used for BOTH the unit master and a stock item's base unit so they always
