@@ -630,7 +630,8 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     //   Reference_Number__c - the bill reference the business typed (all staging objects)
     //   Name              - the record's own number (ORD-000158), the last-resort identifier
     const hasOrderNo = ['Order', 'Purchase', 'PurchaseOrder'].includes(spec.objectType);
-    const docRefFields = ['Name', 'Reference_Number__c', ...(hasOrderNo ? ['Order_Number__c'] : [])];
+    // Tally_Guid__c is fetched so we can REFUSE to post a row that already has one (see below).
+    const docRefFields = ['Name', 'Reference_Number__c', spec.externalId, ...(hasOrderNo ? ['Order_Number__c'] : [])];
     const selectFields = [...new Set([...sourceFields, ...addrFields, ...docRefFields])];
     // Distributor scoping by SAP_Id__c. The org stamps a COMPOSITE SAP id on each staging row —
     // '<distributorSAP>-<recordNo>' (e.g. '100273-00020961', '100273-INV-0000020638') — so the
@@ -709,6 +710,18 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
                 const sap = String(ln.productSapId || '').trim().toLowerCase();
                 if (!(rateBySap.get(sap) || 0)) zeroRateItems.add(String(ln.productSapId || ln.stockItem || '(unknown item)'));
             }
+        }
+        // IDEMPOTENCY GUARD. A Tally voucher cannot be addressed for update the way a master can:
+        // ACTION="Alter" with REMOTEID=<guid> does NOT update the voucher, it CREATES ANOTHER ONE
+        // (verified live — the voucher count went 2 -> 3). So once a staging row has a Tally GUID,
+        // its voucher exists and must never be posted again: re-posting is what produced duplicate
+        // orders with doubled quantities. Re-processing can happen whenever a Done row is flipped
+        // back to Pending (a retry, a manual reset, an org automation).
+        const existingGuid = String(row[spec.externalId] || '').trim();
+        if (existingGuid) {
+            log(`  ${row.Id}: already posted to Tally (guid ${existingGuid}) — skipping to avoid a duplicate voucher`);
+            if (!opts.dryRun) await sfUpdate(spec.stagingObject, row.Id, { Sync_Status__c: 'Done', Error__c: '' }).catch(() => { });
+            continue;
         }
         // Document number (what this voucher IS) and bill reference (what it points at).
         const orderRef = String(row.Order_Number__c || row.Name || '').trim();
