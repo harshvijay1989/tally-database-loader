@@ -5,8 +5,24 @@ import { syncAccountsToTally, syncAccountsToSalesforce, syncProductsToTally, syn
 import { syncPricesToTally } from './sfPrice.mjs';
 import { logToTrigger } from './sfLog.mjs';
 
-/** Masters (Account, Warehouse, then Product) run before transactions. Stable priority sort key. */
-function masterFirst(objectType: string): number { return objectType === 'Account' ? 0 : objectType === 'Warehouse' ? 1 : objectType === 'Product' ? 2 : 3; }
+/** Every MASTER runs before any transaction, in dependency order. A transaction references a party
+ *  ledger, a stock item, its unit/stock group and a godown; if those are not in Tally first the
+ *  voucher either fails or — worse — posts with the quantity dropped or the stock sent to Main
+ *  Location (Tally reports success either way). Order: Account -> Warehouse -> Product -> Price,
+ *  then transactions. Price is a master too: it was previously tied with transactions, so a price
+ *  list could be pushed after the invoices that should have used it. Stable priority sort key. */
+function masterFirst(objectType: string): number {
+    switch (objectType) {
+        case 'Account': return 0;
+        case 'Warehouse': return 1;
+        case 'Product': return 2;
+        case 'Price': return 3;
+        default: return 4;   // Invoice, Order, Purchase, Note, PurchaseOrder
+    }
+}
+
+/** Is this object a master (as opposed to a transaction)? Used by the UI's two-stage run. */
+export function isMasterObject(objectType: string): boolean { return masterFirst(objectType) < 4; }
 
 // The runner is the connector's control loop. Every cycle it asks Salesforce what it is
 // allowed to do (Sync_Config__c for THIS distributor, by SAP company code) and acts ONLY on

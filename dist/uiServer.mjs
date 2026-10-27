@@ -804,7 +804,7 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/api/scheduler/run' && req.method === 'POST') {
             const b = await readBody(req).then(s => s ? JSON.parse(s) : {}).catch(() => ({}));
             const tc = loadTallyConfig();
-            const reports = await scheduler.runNow(() => ({ server: tc.server, port: tc.port }), logLine, b.object || undefined);
+            const reports = await scheduler.runNow(() => ({ server: tc.server, port: tc.port }), logLine, b.object || undefined, b.direction || undefined);
             return json(200, { ran: true, reports });
         }
         if (url.pathname === '/api/scheduler/toggle' && req.method === 'POST') {

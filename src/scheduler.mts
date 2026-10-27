@@ -1,5 +1,5 @@
 import { runCycle, bakedSapId } from './syncRunner.mjs';
-import { loadSyncConfigs, resolveAccount, nextDue, isDue, type SyncConfig } from './sfConfig.mjs';
+import { loadSyncConfigs, resolveAccount, nextDue, isDue, type SyncConfig, type Direction } from './sfConfig.mjs';
 import type { CycleReport } from './syncRunner.mjs';
 
 // Self-running scheduler that lives INSIDE the connector process. While the connector is
@@ -54,9 +54,11 @@ export function startScheduler(getTally: () => TallyLoc, log: LogFn): void {
 export function setEnabled(on: boolean): void { state.enabled = on; }
 
 /** Trigger a run now (optionally a single object), regardless of schedule. */
-export async function runNow(getTally: () => TallyLoc, log: LogFn, objectType?: string): Promise<CycleReport[]> {
+export async function runNow(getTally: () => TallyLoc, log: LogFn, objectType?: string, direction?: Direction): Promise<CycleReport[]> {
     const { server, port } = getTally();
-    const reports = await runCycle({ server, port, dryRun: false, force: true, objectType, log });
+    // force: true - "Run all" means run all of them, not only the ones whose schedule is due.
+    // runCycle already orders masters before transactions within each direction.
+    const reports = await runCycle({ server, port, dryRun: false, force: true, objectType, direction, log });
     if (reports.length) { state.lastReports = reports; state.lastRunAt = Date.now(); }
     return reports;
 }

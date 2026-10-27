@@ -38,9 +38,11 @@ export function startScheduler(getTally, log) {
 }
 export function setEnabled(on) { state.enabled = on; }
 /** Trigger a run now (optionally a single object), regardless of schedule. */
-export async function runNow(getTally, log, objectType) {
+export async function runNow(getTally, log, objectType, direction) {
     const { server, port } = getTally();
-    const reports = await runCycle({ server, port, dryRun: false, force: true, objectType, log });
+    // force: true - "Run all" means run all of them, not only the ones whose schedule is due.
+    // runCycle already orders masters before transactions within each direction.
+    const reports = await runCycle({ server, port, dryRun: false, force: true, objectType, direction, log });
     if (reports.length) {
         state.lastReports = reports;
         state.lastRunAt = Date.now();
