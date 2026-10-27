@@ -1,7 +1,25 @@
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { AccountRef } from './sfConfig.mjs';
-import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, ensureStockGroup, setLedgerMultiAddress, tallyUnitSymbol, MasterKey, TallyAddress, LedgerProfile } from './tallyMaster.mjs';
+import { upsertLedgerWithSapId, setLedgerSapId, readLedgerKeys, upsertStockItemWithSapId, upsertGodown, readGodownKeys, ensureStockGroup, setLedgerMultiAddress, tallyUnitSymbol, currentCompanyGuid, isGuidForCompany, MasterKey, TallyAddress, LedgerProfile } from './tallyMaster.mjs';
 import { resolveStateCode, stateNameFromCode } from './stateCodes.mjs';
+
+/** SOQL fragment for "not yet synced to THIS Tally company".
+ *
+ *  A Tally GUID is '<companyGuid>-<serial>', i.e. scoped to one company file. A master selected on
+ *  `Tally_Guid__c = null` alone is therefore never re-created when the distributor's Tally is
+ *  rebuilt, rolled to a new financial-year company, or pointed at a different file: every row still
+ *  carries the OLD company's GUID, so it looks synced while the ledger/item/godown is absent.
+ *  (Live example: all 21 of Nutan's warehouse rows hold GUIDs from the 2017-18 company, yet Nutan
+ *  contains only Main Location.)
+ *
+ *  Widening the filter is safe because the master writers are GUID-first: a GUID they cannot
+ *  resolve falls back to matching by name, so a row re-selected here is updated, not duplicated.
+ *  With no company GUID readable we fall back to the original `= null` test rather than re-pushing
+ *  every master blindly. */
+function notSyncedToThisCompany(companyGuid: string): string {
+    const g = (companyGuid || '').replace(/'/g, "\\'");
+    return g ? `(Tally_Guid__c = null OR (NOT Tally_Guid__c LIKE '${g}%'))` : `Tally_Guid__c = null`;
+}
 
 /** Build a TallyAddress from a Salesforce compound-address field set (e.g. 'BillingAddress__' on
  *  Tally_Account__c, 'Full_Address__' on Tally_Shipping_Address__c). Salesforce stores the STATE
@@ -116,6 +134,7 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
     opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
+    const companyGuid = await currentCompanyGuid(server, port);
     // The business/org creates the row with Sync_Status__c = 'To Tally'; we send it when it also
     // has a SAP Id and no GUID yet. GUID-blank makes this self-terminating (once we write the
     // GUID back the row drops out of this query and is never pushed again).
@@ -131,7 +150,7 @@ export async function syncAccountsToTally(acct: AccountRef, server: string, port
         `Credit_Limit__c, Credit_Period_Days__c, PAN__c, GST_Registration_Type__c, Primary_Contact__r.Name ` +
         `FROM Tally_Account__c ` +
         `WHERE Distributor__c = '${esc(acct.id)}' AND Sync_Status__c = 'To Tally' ` +
-        `AND SAP_ID__c != null AND Tally_Guid__c = null ` +
+        `AND SAP_ID__c != null AND ${notSyncedToThisCompany(companyGuid)} ` +
         `ORDER BY Name`);
     res.scanned = rows.length;
     for (const r of rows) {
@@ -180,6 +199,7 @@ export async function syncWarehousesToTally(acct: AccountRef, server: string, po
     opts: { log?: LogFn; dryRun?: boolean } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
+    const companyGuid = await currentCompanyGuid(server, port);
     const rows = await sfQuery(
         `SELECT Id, Name, Address_Type__c, Tally_Guid__c ` +
         `FROM Tally_Shipping_Address__c ` +
@@ -189,7 +209,12 @@ export async function syncWarehousesToTally(acct: AccountRef, server: string, po
     res.scanned = rows.length;
     for (const r of rows) {
         const name: string = r.Name;
-        const knownGuid: string = r.Tally_Guid__c || '';
+        // Only trust a GUID written against THIS company; one from another Tally file points at
+        // a godown that does not exist here, so we create by name instead. (Selection still follows
+        // the org's Sync_Status__c — it decides what to send; we only decide how to address it.)
+        const storedGuid: string = r.Tally_Guid__c || '';
+        const knownGuid: string = isGuidForCompany(storedGuid, companyGuid) ? storedGuid : '';
+        if (storedGuid && !knownGuid) log(`  warehouse '${r.Name}': GUID ${storedGuid} is from another Tally company — creating here`);
         if (opts.dryRun) { log(`[dry-run] would push warehouse/godown '${name}' (guid='${knownGuid}')`); continue; }
         try {
             const w = await upsertGodown(server, port, name, '', { knownGuid: knownGuid || undefined, log });
@@ -447,12 +472,13 @@ export async function syncProductsToTally(acct: AccountRef, server: string, port
     opts: { log?: LogFn; dryRun?: boolean; defaultUnit?: string } = {}): Promise<MasterSyncResult> {
     const log = opts.log || (() => { });
     const res: MasterSyncResult = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
+    const companyGuid = await currentCompanyGuid(server, port);
     const fallbackUnit = opts.defaultUnit || 'pcs';
     const rows = await sfQuery(
         `SELECT Id, Name, SAP_ID__c, Tally_Guid__c, BaseUOM__c, PackType__c, ` +
         `Category__c, SubCategory__c, HSN__c, GST_Percentage__c ` +
         `FROM Tally_Product__c ` +
-        `WHERE Account__c = '${esc(acct.id)}' AND SAP_ID__c != null AND Tally_Guid__c = null ` +
+        `WHERE Account__c = '${esc(acct.id)}' AND SAP_ID__c != null AND ${notSyncedToThisCompany(companyGuid)} ` +
         `ORDER BY Name`);
     // Stock groups created once per run (Category -> SubCategory), not per product.
     const groupsDone = new Set<string>();
