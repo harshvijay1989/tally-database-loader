@@ -458,8 +458,22 @@ const stockGroupsDone = new Set<string>();
 /** Godowns already ensured this process — avoids one Tally round-trip per voucher per warehouse. */
 const godownsEnsured = new Set<string>();
 
-/** Units confirmed present in Tally this process — one check per unit, not per line. */
-const unitsVerified = new Set<string>();
+/** A stock item's BASE UNIT as Tally holds it, cached per process ('' when unknown).
+ *  Tally is the authority: a voucher line quoting any other unit has its quantity discarded. */
+const itemBaseUnit = new Map<string, string>();
+async function stockItemBaseUnit(server: string, port: number, itemName: string): Promise<string> {
+    const key = itemName.trim().toLowerCase();
+    if (!key) return '';
+    const hit = itemBaseUnit.get(key);
+    if (hit !== undefined) return hit;
+    let unit = '';
+    try {
+        const keys = await readStockItemKeys(server, port, { names: [itemName] });
+        unit = (keys[0]?.unit || '').trim();
+    } catch { unit = ''; }
+    itemBaseUnit.set(key, unit);
+    return unit;
+}
 
 /** SELECT `fields` from `object`, falling back to `safeFields` if the wide query fails. The wide
  *  field list is driven by org metadata, so a single renamed/unreadable field there must not break
@@ -791,17 +805,26 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
             // missing, not a bare shell — only falls back to bare if there's no bridge row.
             for (const inv of (built.inventoryEntries || [])) if (!masterErr && !(await ensureStockItemRich(acct, server, port, inv.stockItem, inv.unit, inv.productSapId || '', log)))
                 masterErr = `stock item '${inv.stockItem}' is missing and could not be created`;
-            // Units referenced by stock lines MUST exist in Tally. If one does not, Tally does not
-            // reject the voucher — it parses "5.00 <unknown unit>" as no quantity at all, DROPS the
-            // quantity and rate, keeps the amount, and reports created=1 with no error. That is how
-            // orders reached Tally showing a value but no quantity (verified on Sales, Purchase and
-            // Sales Order). Unit creation failing used to be only a warning; it is now fatal.
+            // THE VOUCHER'S UNIT MUST BE THE STOCK ITEM'S OWN BASE UNIT. Tally does not reject a
+            // mismatch — it cannot reconcile "5.00 KG" against an item held in CartonBox, so it
+            // DROPS the quantity and rate, keeps the amount, and reports created=1 with no error.
+            // Verified live: item base CartonBox + line KG -> ACTUALQTY/RATE absent, AMOUNT 500.00.
+            // This is the real cause of orders arriving in Tally with a value but no quantity, and
+            // it is the common case here: staging lines carry Unit__c (e.g. 'KG') while the item is
+            // created from PackType__c (e.g. 'CartonBox'). Checking only that the unit EXISTS is not
+            // enough. Tally owns the item's unit, so the line is rewritten to match it.
             for (const inv of (built.inventoryEntries || [])) {
                 if (masterErr) break;
-                const u = tallyUnitSymbol(inv.unit);
-                if (!u || unitsVerified.has(u)) continue;
-                if (await unitExists(server, port, u)) { unitsVerified.add(u); continue; }
-                masterErr = `unit '${u}' (line '${inv.stockItem}') does not exist in Tally and could not be created — posting would silently lose the quantity`;
+                const baseUnit = await stockItemBaseUnit(server, port, inv.stockItem);
+                if (!baseUnit) {
+                    masterErr = `stock item '${inv.stockItem}' has no base unit in Tally — posting would silently lose the quantity`;
+                    break;
+                }
+                const lineUnit = tallyUnitSymbol(inv.unit);
+                if (lineUnit.toLowerCase() !== baseUnit.toLowerCase()) {
+                    log(`  line '${inv.stockItem}': unit '${lineUnit}' does not match the item's base unit '${baseUnit}' in Tally — using '${baseUnit}' (a mismatch makes Tally discard the quantity)`);
+                    inv.unit = baseUnit;
+                }
             }
             // Godowns referenced by stock lines. Tally REJECTS a batch allocation naming a godown
             // that does not exist, so an invoice whose warehouse had not been synced yet would fail
