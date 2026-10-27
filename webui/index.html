@@ -528,7 +528,7 @@ function renderSchedTable(){
     html += '<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px"><b>'+c.objectType+'</b></td>'
          +  '<td style="color:var(--muted)">'+kind+'</td><td>'+c.schedule+'</td><td>'+fmt(c.lastRun)+'</td>'
          +  '<td>'+fmt(c.nextDue)+' '+(c.due?'<span style="color:#16a34a">(due)</span>':'')+'</td>'
-         +  '<td><button class="mini ghost" onclick="schedRunNow(''+c.objectType+'')">Run now</button></td></tr>';
+         +  '<td><button class="mini ghost" data-obj="'+c.objectType+'" onclick="schedRunNow(this.dataset.obj)">Run now</button></td></tr>';
   }
   t.innerHTML=html;
 }
