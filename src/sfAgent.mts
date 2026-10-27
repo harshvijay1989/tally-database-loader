@@ -455,6 +455,61 @@ const soqlEsc = (s: string) => String(s == null ? '' : s).replace(/'/g, "\\'");
  *  repeatedly (one voucher per order, same products), so this keeps it to one create per group. */
 const stockGroupsDone = new Set<string>();
 
+/** Collapse a master name to a stable comparison key: trimmed, inner whitespace collapsed,
+ *  case-insensitive. Tally treats master names case-insensitively, so 'Vita Sales', 'vita sales'
+ *  and '  Vita  Sales ' are the SAME godown and must never produce three of them. */
+function normaliseName(s: string): string { return String(s || '').trim().replace(/s+/g, ' ').toLowerCase(); }
+
+/** Ensure a godown exists in Tally and that Salesforce holds its GUID.
+ *
+ *  Identity is GUID-first: if a Tally_Shipping_Address__c row for this warehouse already carries a
+ *  GUID for THIS company we address the godown by it, so a rename or a difference in casing cannot
+ *  produce a duplicate. The GUID is written back afterwards — and when no row exists at all (the
+ *  common case, because the godown comes from the order's Dispatch_Address__c rather than from a
+ *  Tally_Shipping_Address__c) one is created, so the identity has somewhere to live instead of us
+ *  falling back to name matching on every future run.
+ *  Returns '' on success, else an error message. */
+async function ensureGodownTracked(acct: AccountRef, server: string, port: number, name: string, nativeAddressId: string, log: LogFn): Promise<string> {
+    const clean = String(name || '').trim().replace(/s+/g, ' ');
+    if (!clean) return '';
+    let rowId = ''; let knownGuid = '';
+    try {
+        // Identify by the NATIVE address record first — that link is stable across renames and
+        // casing, whereas matching on Name is not. Fall back to the name only when the row has no
+        // link yet (e.g. it was pulled in from Tally rather than created from an order).
+        const byNative = nativeAddressId
+            ? `Shipping_Address__c = '${soqlEsc(nativeAddressId)}'`
+            : `Name = '${soqlEsc(clean)}'`;
+        let rows = await sfQuery(
+            `SELECT Id, Name, Tally_Guid__c FROM Tally_Shipping_Address__c ` +
+            `WHERE Account__c = '${soqlEsc(acct.id)}' AND ${byNative} LIMIT 1`);
+        if (!rows.length && nativeAddressId) rows = await sfQuery(
+            `SELECT Id, Name, Tally_Guid__c FROM Tally_Shipping_Address__c ` +
+            `WHERE Account__c = '${soqlEsc(acct.id)}' AND Name = '${soqlEsc(clean)}' LIMIT 1`);
+        if (rows[0]) {
+            rowId = rows[0].Id;
+            const g = String(rows[0].Tally_Guid__c || '');
+            if (isGuidForCompany(g, await currentCompanyGuid(server, port))) knownGuid = g;   // a GUID from another company is not ours
+        }
+    } catch (e: any) { log(`  (godown '${clean}': SF lookup failed — ${e?.message || e})`, true); }
+
+    const w = await upsertGodown(server, port, clean, '', { knownGuid: knownGuid || undefined, log });
+    if (!w.ok) return `godown '${clean}' is missing and could not be created — ${w.message}`;
+    log(`  godown '${clean}' ensured${w.guid ? ` (guid ${w.guid})` : ''}`);
+
+    if (w.guid && w.guid !== knownGuid) {
+        try {
+            if (rowId) await sfUpdate('Tally_Shipping_Address__c', rowId, { Tally_Guid__c: w.guid, ...(nativeAddressId ? { Shipping_Address__c: nativeAddressId } : {}) });
+            else await sfInsert('Tally_Shipping_Address__c', [{
+                Account__c: acct.id, Name: clean.slice(0, 80),
+                Address_Type__c: 'Warehouse', Tally_Guid__c: w.guid, Sync_Status__c: 'From Tally',
+                ...(nativeAddressId ? { Shipping_Address__c: nativeAddressId } : {}),
+            }]).then(() => log(`  Tally_Shipping_Address__c created for godown '${clean}'`));
+        } catch (e: any) { log(`  (godown GUID write-back skipped: ${e?.message || e})`, true); }
+    }
+    return '';
+}
+
 /** Godowns already ensured this process — avoids one Tally round-trip per voucher per warehouse. */
 const godownsEnsured = new Set<string>();
 
@@ -657,6 +712,7 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
         // through the parent so the godown and consignee are not silently lost (with no godown,
         // Tally files the stock under Main Location without any error).
         ...(spec.objectType === 'Order' ? [
+            'Order__r.Dispatch_Address__c',
             'Order__r.Dispatch_Address__r.Name',
             'Order__r.Shipping_Address__r.Name',
             'Order__r.Shipping_Address__r.Full_Address__Street__s',
@@ -835,17 +891,17 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
                     break;
                 }
             }
-            // Godowns referenced by stock lines. Tally REJECTS a batch allocation naming a godown
-            // that does not exist, so an invoice whose warehouse had not been synced yet would fail
-            // even though every other master was auto-created. (Order vouchers emit no allocation,
-            // so they were unaffected — which is why this only showed up on invoices.)
+            // Godowns referenced by stock lines. Tally silently redirects an unknown godown to Main
+            // Location instead of erroring, so a warehouse that is not in Tally yet must be created
+            // BEFORE posting or the stock quietly lands in the wrong place.
             const godowns = new Set((built.inventoryEntries || []).map(i => (i.godown || '').trim()).filter(Boolean));
             for (const g of godowns) {
                 if (masterErr) break;
-                if (godownsEnsured.has(g)) continue;
-                const w = await upsertGodown(server, port, g, '', { log });
-                if (w.ok) { godownsEnsured.add(g); log(`  godown '${g}' ensured for this voucher`); }
-                else masterErr = `godown '${g}' is missing and could not be created — ${w.message}`;
+                const key = normaliseName(g);
+                if (godownsEnsured.has(key)) continue;
+                const err = await ensureGodownTracked(acct, server, port, g, row.Order__r?.Dispatch_Address__c || '', log);
+                if (err) { masterErr = err; break; }
+                godownsEnsured.add(key);
             }
         }
         if (masterErr) {
