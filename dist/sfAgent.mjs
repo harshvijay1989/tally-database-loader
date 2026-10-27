@@ -608,7 +608,7 @@ async function ensureStockItemRich(acct, server, port, name, fallbackUnit, produ
 /** One Salesforce -> Tally run for a single object type: create Tally vouchers from
  *  Pending staging rows flagged Direction=ToTally (with their line items), then write status back. */
 export async function syncToTally(spec, acct, server, port, opts = {}) {
-    var _a;
+    var _a, _b, _c, _d;
     const log = opts.log || (() => { });
     const startedAt = new Date();
     log(`[agent] ${spec.objectType} SF->Tally: starting${opts.dryRun ? ' (dry-run)' : ''}`);
@@ -630,6 +630,19 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
     const hasShipTo = spec.objectType === 'Invoice' || spec.objectType === 'Order';
     const addrFields = [
         ...(hasWarehouse ? ['Warehouse_Address__r.Name'] : []),
+        // The staging lookups are frequently empty because the org populates the NATIVE order's
+        // Dispatch_Address__c (ship-from) and Shipping_Address__c (ship-to) instead, and those
+        // point at Shipping_Address__c rather than Tally_Shipping_Address__c. Read them straight
+        // through the parent so the godown and consignee are not silently lost (with no godown,
+        // Tally files the stock under Main Location without any error).
+        ...(spec.objectType === 'Order' ? [
+            'Order__r.Dispatch_Address__r.Name',
+            'Order__r.Shipping_Address__r.Name',
+            'Order__r.Shipping_Address__r.Full_Address__Street__s',
+            'Order__r.Shipping_Address__r.Full_Address__City__s',
+            'Order__r.Shipping_Address__r.Full_Address__PostalCode__s',
+            'Order__r.Shipping_Address__r.Full_Address__StateCode__s',
+        ] : []),
         ...(hasShipTo ? [
             'Customer_Shipping_Address__r.Name',
             'Customer_Shipping_Address__r.Full_Address__StateCode__s',
@@ -714,9 +727,9 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
         let shipTo;
         let shipToStateCode = '';
         if (hasWarehouse)
-            headerGodown = ((_a = row.Warehouse_Address__r) === null || _a === void 0 ? void 0 : _a.Name) || '';
+            headerGodown = ((_a = row.Warehouse_Address__r) === null || _a === void 0 ? void 0 : _a.Name) || ((_c = (_b = row.Order__r) === null || _b === void 0 ? void 0 : _b.Dispatch_Address__r) === null || _c === void 0 ? void 0 : _c.Name) || '';
         if (hasShipTo) {
-            const cs = row.Customer_Shipping_Address__r;
+            const cs = row.Customer_Shipping_Address__r || ((_d = row.Order__r) === null || _d === void 0 ? void 0 : _d.Shipping_Address__r);
             if (cs) {
                 shipToStateCode = cs.Full_Address__StateCode__s || '';
                 const cityLine = [cs.Full_Address__City__s, cs.Full_Address__PostalCode__s].filter(Boolean).join(' ');

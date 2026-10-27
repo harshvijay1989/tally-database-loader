@@ -651,6 +651,19 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
     const hasShipTo = spec.objectType === 'Invoice' || spec.objectType === 'Order';
     const addrFields = [
         ...(hasWarehouse ? ['Warehouse_Address__r.Name'] : []),
+        // The staging lookups are frequently empty because the org populates the NATIVE order's
+        // Dispatch_Address__c (ship-from) and Shipping_Address__c (ship-to) instead, and those
+        // point at Shipping_Address__c rather than Tally_Shipping_Address__c. Read them straight
+        // through the parent so the godown and consignee are not silently lost (with no godown,
+        // Tally files the stock under Main Location without any error).
+        ...(spec.objectType === 'Order' ? [
+            'Order__r.Dispatch_Address__r.Name',
+            'Order__r.Shipping_Address__r.Name',
+            'Order__r.Shipping_Address__r.Full_Address__Street__s',
+            'Order__r.Shipping_Address__r.Full_Address__City__s',
+            'Order__r.Shipping_Address__r.Full_Address__PostalCode__s',
+            'Order__r.Shipping_Address__r.Full_Address__StateCode__s',
+        ] : []),
         ...(hasShipTo ? [
             'Customer_Shipping_Address__r.Name',
             'Customer_Shipping_Address__r.Full_Address__StateCode__s',
@@ -728,9 +741,9 @@ export async function syncToTally(spec: ObjectSpec, acct: AccountRef, server: st
         // Header warehouse (Invoice/Order ship-FROM, Purchase receive-INTO) + customer ship-to
         // (sales only), from the Tally_Shipping_Address__c lookups. Ship-to STATE = GST place of supply.
         let headerGodown = ''; let shipTo: ShipTo | undefined; let shipToStateCode = '';
-        if (hasWarehouse) headerGodown = row.Warehouse_Address__r?.Name || '';
+        if (hasWarehouse) headerGodown = row.Warehouse_Address__r?.Name || row.Order__r?.Dispatch_Address__r?.Name || '';
         if (hasShipTo) {
-            const cs = row.Customer_Shipping_Address__r;
+            const cs = row.Customer_Shipping_Address__r || row.Order__r?.Shipping_Address__r;
             if (cs) {
                 shipToStateCode = cs.Full_Address__StateCode__s || '';
                 const cityLine = [cs.Full_Address__City__s, cs.Full_Address__PostalCode__s].filter(Boolean).join(' ');
