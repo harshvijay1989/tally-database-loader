@@ -15,15 +15,17 @@ function q(s) { return (s || '').replace(/"/g, ''); } // for inside Tally "..." 
 const num = (xml, tag) => { const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? parseInt(m[1], 10) || 0 : 0; };
 /** The ledger's commercial details block. */
 function ledgerProfileXml(p, ledgerName) {
+    // Party bank details are FLAT scalar tags on the LEDGER — verified against live TallyPrime by
+    // exporting the ledger schema ("List of Accounts"). A <LEDBANKDETAILS.LIST> block is accepted
+    // by the import and SILENTLY DISCARDED, which is what made bank details never appear.
+    // Note: Tally stores ONE bank per party ledger (its own FAQ: "TallyPrime currently does not
+    // support adding details of more than one bank for a party in a party ledger").
     const b = p.bank;
     const bankXml = (b && (b.name || b.accountNumber || b.ifsc || b.branch))
-        ? '<LEDBANKDETAILS.LIST>'
-            + (b.name ? `<BANKNAME>${esc(b.name)}</BANKNAME>` : '')
-            + (b.accountNumber ? `<ACCOUNTNUMBER>${esc(b.accountNumber)}</ACCOUNTNUMBER>` : '')
+        ? (b.name ? `<BANKDETAILS>${esc(b.name)}</BANKDETAILS>` : '')
             + (b.ifsc ? `<IFSCODE>${esc(b.ifsc)}</IFSCODE>` : '')
             + (b.branch ? `<BRANCHNAME>${esc(b.branch)}</BRANCHNAME>` : '')
-            + `<ACCHOLDERNAME>${esc(b.holder || ledgerName)}</ACCHOLDERNAME>`
-            + '</LEDBANKDETAILS.LIST>'
+            + `<BANKACCHOLDERNAME>${esc(b.holder || ledgerName)}</BANKACCHOLDERNAME>`
         : '';
     return (typeof p.creditLimit === 'number' ? `<CREDITLIMIT>${p.creditLimit}</CREDITLIMIT>` : '')
         + (typeof p.creditPeriodDays === 'number' && p.creditPeriodDays > 0 ? `<BILLCREDITPERIOD>${Math.round(p.creditPeriodDays)} Days</BILLCREDITPERIOD>` : '')
