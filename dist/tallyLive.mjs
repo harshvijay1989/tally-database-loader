@@ -33,7 +33,13 @@ export function buildFetchXml(tallyType, fetchList, opts = {}) {
 // Reuse ONE keep-alive connection for all Tally requests. Opening a fresh socket
 // per request makes Tally's single-threaded gateway drop connections (ECONNRESET);
 // a persistent connection is both stable and much faster.
-const tallyAgent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+// Tally's HTTP gateway does NOT handle keep-alive reliably: it closes the connection its own way
+// after a response, so a pooled socket is often already dead when the next request goes out. That
+// request then hangs until its timeout — and with maxSockets:1 every later call queues behind it,
+// which looks exactly like "Tally is wedged" when in fact the CLIENT socket is the problem. (It is
+// why one-off requests from a fresh process kept working while a running sync hung.)
+// One fresh connection per request, explicitly closed.
+const tallyAgent = new http.Agent({ keepAlive: false, maxSockets: 1 });
 /** Build a filter expression by ledger/master Name (batched pagination). */
 export function nameFilter(names) {
     return names.map(n => `$Name = "${escapeHtml(n).replace(/"/g, '&quot;')}"`).join(' OR ');
@@ -83,9 +89,9 @@ function postTallyXmlRaw(server, port, msg, timeoutMs = 20000) {
             const req = http.request({
                 hostname: server, port, path: '', method: 'POST', agent: tallyAgent,
                 headers: {
+                    'Connection': 'close',
                     'Content-Length': Buffer.byteLength(msg, 'utf16le'),
                     'Content-Type': 'text/xml;charset=utf-16',
-                    'Connection': 'keep-alive'
                 }
             }, (res) => {
                 let data = '';
