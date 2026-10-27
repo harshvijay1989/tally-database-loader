@@ -544,12 +544,12 @@ async function ensureStockItemRich(acct, server, port, name, fallbackUnit, produ
         if (r && r.SAP_ID__c) {
             const stockGroup = String(r.SubCategory__c || '').trim() || String(r.Category__c || '').trim() || undefined;
             await ensureProductStockGroups(server, port, r.Category__c || '', r.SubCategory__c || '', stockGroupsDone, log);
-            const w = await upsertStockItemWithSapId(server, port, name, resolveProductUnit(r, fallbackUnit || 'Nos'), r.SAP_ID__c, {
+            const w = await upsertStockItemWithSapId(server, port, name, (tallyUnitSymbol(fallbackUnit) || resolveProductUnit(r, 'Nos')), r.SAP_ID__c, {
                 gstRate: (r.GST_Percentage__c != null) ? Number(r.GST_Percentage__c) : undefined,
                 hsn: r.HSN__c || undefined, knownGuid: r.Tally_Guid__c || undefined, stockGroup, log,
             });
             if (w.ok) {
-                log(`  stock item '${name}' created from Tally_Product (sap=${r.SAP_ID__c}, unit=${resolveProductUnit(r, fallbackUnit || 'Nos')}, group=${stockGroup || 'n/a'}, gst=${(_a = r.GST_Percentage__c) !== null && _a !== void 0 ? _a : 'n/a'}, hsn=${r.HSN__c || 'n/a'})`);
+                log(`  stock item '${name}' created from Tally_Product (sap=${r.SAP_ID__c}, unit=${(tallyUnitSymbol(fallbackUnit) || resolveProductUnit(r, 'Nos'))}, group=${stockGroup || 'n/a'}, gst=${(_a = r.GST_Percentage__c) !== null && _a !== void 0 ? _a : 'n/a'}, hsn=${r.HSN__c || 'n/a'})`);
                 if (w.guid && w.guid !== r.Tally_Guid__c)
                     await sfUpdate('Tally_Product__c', r.Id, { Tally_Guid__c: w.guid }).catch(() => { });
                 return true;
@@ -577,7 +577,7 @@ async function ensureStockItemRich(acct, server, port, name, fallbackUnit, produ
         if (p) {
             const productKey = String(p.SAP_ID__c || p.ProductCode || psap || '').trim();
             const mergedSap = productKey ? `${acct.sapId}-${productKey}` : ''; // '<distributorSAP>-<productKey>', as DistProductMappingHandler builds it
-            const unit = resolveProductUnit(p, fallbackUnit || 'Nos');
+            const unit = (tallyUnitSymbol(fallbackUnit) || resolveProductUnit(p, 'Nos'));
             const stockGroup = String(p.SubCategory__c || '').trim() || String(p.Category__c || '').trim() || undefined;
             await ensureProductStockGroups(server, port, p.Category__c || '', p.SubCategory__c || '', stockGroupsDone, log);
             const w = await upsertStockItemWithSapId(server, port, name, unit, mergedSap, {
@@ -801,26 +801,28 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             for (const inv of (built.inventoryEntries || []))
                 if (!masterErr && !(await ensureStockItemRich(acct, server, port, inv.stockItem, inv.unit, inv.productSapId || '', log)))
                     masterErr = `stock item '${inv.stockItem}' is missing and could not be created`;
-            // THE VOUCHER'S UNIT MUST BE THE STOCK ITEM'S OWN BASE UNIT. Tally does not reject a
-            // mismatch — it cannot reconcile "5.00 KG" against an item held in CartonBox, so it
-            // DROPS the quantity and rate, keeps the amount, and reports created=1 with no error.
-            // Verified live: item base CartonBox + line KG -> ACTUALQTY/RATE absent, AMOUNT 500.00.
-            // This is the real cause of orders arriving in Tally with a value but no quantity, and
-            // it is the common case here: staging lines carry Unit__c (e.g. 'KG') while the item is
-            // created from PackType__c (e.g. 'CartonBox'). Checking only that the unit EXISTS is not
-            // enough. Tally owns the item's unit, so the line is rewritten to match it.
+            // The ORDER's unit is the truth: an order for 1 KG must reach Tally as 1 KG. We do NOT
+            // rewrite it to the stock item's unit — doing that silently changed the quantity's
+            // meaning (an order of 1 KG posted as 1 Carton Box = 10 KG, a 10x overstatement).
+            // Tally discards the quantity when the voucher's unit is not the item's base unit, so
+            // if they disagree the voucher is refused and the item's unit must be corrected.
             for (const inv of (built.inventoryEntries || [])) {
                 if (masterErr)
                     break;
-                const baseUnit = await stockItemBaseUnit(server, port, inv.stockItem);
-                if (!baseUnit) {
-                    masterErr = `stock item '${inv.stockItem}' has no base unit in Tally — posting would silently lose the quantity`;
+                const lineUnit = tallyUnitSymbol(inv.unit);
+                if (!lineUnit) {
+                    masterErr = `line '${inv.stockItem}' has no unit`;
                     break;
                 }
-                const lineUnit = tallyUnitSymbol(inv.unit);
+                const baseUnit = await stockItemBaseUnit(server, port, inv.stockItem);
+                if (!baseUnit) {
+                    masterErr = `stock item '${inv.stockItem}' has no base unit in Tally`;
+                    break;
+                }
                 if (lineUnit.toLowerCase() !== baseUnit.toLowerCase()) {
-                    log(`  line '${inv.stockItem}': unit '${lineUnit}' does not match the item's base unit '${baseUnit}' in Tally — using '${baseUnit}' (a mismatch makes Tally discard the quantity)`);
-                    inv.unit = baseUnit;
+                    masterErr = `line '${inv.stockItem}': the order is in '${lineUnit}' but the Tally stock item is held in '${baseUnit}'. `
+                        + `Posting either loses the quantity or misstates it, so the item's unit in Tally must be '${lineUnit}'.`;
+                    break;
                 }
             }
             // Godowns referenced by stock lines. Tally REJECTS a batch allocation naming a godown

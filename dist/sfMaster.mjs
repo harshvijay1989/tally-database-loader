@@ -66,7 +66,11 @@ export function addressSummary(a) {
  *  BaseUOM__c is only a fallback because in this org it is literally 'Carton Box' on every product
  *  — including ones sold in buckets — so using it alone made every item carton-box. */
 export function resolveProductUnit(row, fallback = 'Nos') {
-    const pick = String(row.PackType__c || '').trim() || String(row.BaseUOM__c || '').trim() || fallback;
+    // BaseUOM__c is the unit orders are PLACED in, so it is the unit the Tally stock item must be
+    // held in — the voucher and the item then agree and the quantity passes straight through.
+    // PackType__c (the packing format, e.g. Carton Box) is deliberately NOT used: an order for
+    // 1 KG is not 1 Carton Box, and treating it as such overstated stock by the pack factor.
+    const pick = String(row.BaseUOM__c || '').trim() || fallback;
     return tallyUnitSymbol(pick);
 }
 /** Create the Category > SubCategory stock groups for a product (once per run, tracked in `done`). */
