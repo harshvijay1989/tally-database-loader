@@ -204,10 +204,10 @@ export async function syncWarehousesToTally(acct, server, port, opts = {}) {
  *  address" entry (labelled by the row's Name) — never as a godown. The customer ledger is the
  *  row's Tally_Account__c lookup; a row without one cannot be placed and is reported, not guessed. */
 export async function syncCustomerAddressesToTally(acct, server, port, opts = {}) {
-    var _a, _b;
+    var _a, _b, _c;
     const log = opts.log || (() => { });
     const res = { scanned: 0, pushed: 0, pulled: 0, failed: 0, newWatermark: 0, errors: [] };
-    const rows = await sfQuery(`SELECT Id, Name, Address_Type__c, Tally_Account__r.Name, Tally_Account__r.GSTIN__c, ` +
+    const rows = await sfQuery(`SELECT Id, Name, Address_Type__c, Tally_Account__r.Name, Tally_Account__r.GSTIN__c, Tally_Account__r.Tally_Guid__c, ` +
         `Full_Address__Street__s, Full_Address__City__s, Full_Address__PostalCode__s, ` +
         `Full_Address__StateCode__s, Full_Address__CountryCode__s ` +
         `FROM Tally_Shipping_Address__c ` +
@@ -240,7 +240,18 @@ export async function syncCustomerAddressesToTally(acct, server, port, opts = {}
                 continue;
             }
             res.pushed++;
-            log(`  ${r.Address_Type__c} address '${label}' -> ledger '${ledger}'`);
+            // Write an identity back and mark the row done, so it stops re-pushing every cycle.
+            // A Tally multi-address entry has NO GUID of its own (it is an item inside the ledger,
+            // not a master), so we store a COMPOSITE key: '<ledgerGUID>-<addressName>'. The bare
+            // ledger GUID must NOT be used — Tally_Guid__c is an externalId that
+            // syncWarehousesToSalesforce upserts on, and several addresses per customer would
+            // collide. Truncated to the field's 70 chars.
+            const fields = { Sync_Status__c: 'From Tally' };
+            const ledgerGuid = ((_c = r.Tally_Account__r) === null || _c === void 0 ? void 0 : _c.Tally_Guid__c) || '';
+            if (ledgerGuid)
+                fields.Tally_Guid__c = `${ledgerGuid}-${label}`.slice(0, 70);
+            await sfUpdate('Tally_Shipping_Address__c', r.Id, fields).catch((e) => log(`  (status/GUID write-back skipped: ${(e === null || e === void 0 ? void 0 : e.message) || e})`, true));
+            log(`  ${r.Address_Type__c} address '${label}' -> ledger '${ledger}'${fields.Tally_Guid__c ? ` (guid ${fields.Tally_Guid__c})` : ''}`);
             await logTrigger('SF->Tally CustomerAddress', 'Success', 'Tally_Shipping_Address__c', r.Id, `ledger=${ledger}`);
         }
         catch (e) {

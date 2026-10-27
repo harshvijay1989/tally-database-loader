@@ -28,6 +28,10 @@ export interface TallyAddress {
     email?: string;
     mailingName?: string; // defaults to the ledger name
     addressName?: string; // multi-address entries only: the label shown in Tally's address list
+    // Set when `lines` already came back FROM Tally and are complete. Stops addressLinesXml from
+    // appending another "City Pincode" line: on a read-merge-write that extra line is read back as
+    // part of `lines`, and re-appending it every cycle grows the address without bound.
+    linesAreComplete?: boolean;
 }
 
 /** Commercial/identity details that live on a Tally ledger alongside the address. All optional —
@@ -97,8 +101,13 @@ const hasAddr = (a?: TallyAddress) =>
 /** The <ADDRESS.LIST> block (street lines plus a trailing "City Pincode" line when present). */
 function addressLinesXml(a: TallyAddress): string {
     const lines = [...(a.lines || []).filter(Boolean)];
-    const cityLine = [a.city, a.pincode].filter(Boolean).join(' ').trim();
-    if (cityLine) lines.push(cityLine);
+    // Only synthesise a trailing "City Pincode" line for addresses WE built from Salesforce. Lines
+    // read back from Tally already contain it, and re-appending on every read-merge-write cycle
+    // grows the address without bound (observed: "Panjim 403001 / 403001 / 403001").
+    if (!a.linesAreComplete) {
+        const cityLine = [a.city, a.pincode].filter(Boolean).join(' ').trim();
+        if (cityLine) lines.push(cityLine);
+    }
     if (!lines.length) return '';
     return '<ADDRESS.LIST TYPE="String">' + lines.map(l => `<ADDRESS>${esc(l)}</ADDRESS>`).join('') + '</ADDRESS.LIST>';
 }
@@ -262,27 +271,70 @@ export async function setLedgerMultiAddress(server: string, port: number, ledger
     addr: TallyAddress, log?: (m: string, e?: boolean) => void): Promise<boolean> {
     const label = (addr.addressName || '').trim();
     if (!ledgerName || !label) return false;
-    const body = `<ADDRESSNAME>${esc(label)}</ADDRESSNAME>`
-        + addressLinesXml(addr)
-        + (addr.state ? `<STATE>${esc(addr.state)}</STATE>` : '')
-        + `<COUNTRY>${esc(addr.country || 'India')}</COUNTRY>`
-        + (addr.pincode ? `<PINCODE>${esc(addr.pincode)}</PINCODE>` : '')
-        + (addr.gstin ? `<PARTYGSTIN>${esc(addr.gstin)}</PARTYGSTIN>` : '')
-        + (addr.phone ? `<PHONENUMBER>${esc(addr.phone)}</PHONENUMBER>` : '')
-        + (addr.email ? `<EMAIL>${esc(addr.email)}</EMAIL>` : '');
+
+    // READ-MERGE-WRITE. Tally REPLACES the whole multi-address list on every Alter, so sending one
+    // entry silently deletes every other address on the ledger (verified: adding 'AddrB' after
+    // 'AddrA' left only AddrB). Read what is there, swap in/append this one by ADDRESSNAME, and
+    // send the complete list back.
+    const existing = await readLedgerMultiAddresses(server, port, ledgerName);
+    const kept = existing.filter(e => (e.addressName || '').trim().toLowerCase() !== label.toLowerCase());
+    const merged = [...kept, addr];
+    if (kept.length !== existing.length) log?.(`  ledger '${ledgerName}': updating existing address '${label}'`);
+
+    const entryXml = (a: TallyAddress) =>
+        '<LEDMULTIADDRESSLIST.LIST>'
+        + `<ADDRESSNAME>${esc((a.addressName || '').trim())}</ADDRESSNAME>`
+        + addressLinesXml(a)
+        + (a.state ? `<STATE>${esc(a.state)}</STATE>` : '')
+        + `<COUNTRY>${esc(a.country || 'India')}</COUNTRY>`
+        + (a.pincode ? `<PINCODE>${esc(a.pincode)}</PINCODE>` : '')
+        + (a.gstin ? `<PARTYGSTIN>${esc(a.gstin)}</PARTYGSTIN>` : '')
+        + (a.phone ? `<PHONENUMBER>${esc(a.phone)}</PHONENUMBER>` : '')
+        + (a.email ? `<EMAIL>${esc(a.email)}</EMAIL>` : '')
+        + '</LEDMULTIADDRESSLIST.LIST>';
+
     const xml = '<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>'
         + '<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME></REQUESTDESC>'
         + '<REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF">'
         + `<LEDGER NAME="${esc(ledgerName)}" ACTION="Alter">`
         + '<ISMULTIADDRESSAPPLICABLE>Yes</ISMULTIADDRESSAPPLICABLE>'
-        + `<LEDMULTIADDRESSLIST.LIST>${body}</LEDMULTIADDRESSLIST.LIST>`
+        + merged.map(entryXml).join('')
         + '</LEDGER>'
         + '</TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>';
     const resp = await postTallyXml(server, port, xml, 30000);
     const lineErr = (resp.match(/<LINEERROR>([^<]*)<\/LINEERROR>/i) || [])[1] || '';
     const ok = (num(resp, 'ALTERED') + num(resp, 'CREATED')) > 0 && !lineErr;
-    log?.(`ledger '${ledgerName}' address '${label}': ${ok ? 'set' : 'FAILED — ' + (lineErr || 'no change')}`, !ok);
+    log?.(`ledger '${ledgerName}' address '${label}': ${ok ? `set (${merged.length} address(es) on ledger)` : 'FAILED — ' + (lineErr || 'no change')}`, !ok);
     return ok;
+}
+
+/** Read a ledger's existing "multiple addresses". Used to merge rather than clobber them. */
+export async function readLedgerMultiAddresses(server: string, port: number, ledgerName: string): Promise<TallyAddress[]> {
+    const xml = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>MordeLedAddr</ID></HEADER>'
+        + '<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>'
+        + '<TDL><TDLMESSAGE>'
+        + '<COLLECTION NAME="MordeLedAddr" ISMODIFY="No" ISINITIALIZE="Yes">'
+        + '<TYPE>Ledger</TYPE><FILTER>mordeAddrFlt</FILTER><FETCH>Name</FETCH><FETCH>LedMultiAddressList</FETCH>'
+        + '</COLLECTION>'
+        + `<SYSTEM TYPE="Formula" NAME="mordeAddrFlt">$Name = "${q(ledgerName)}"</SYSTEM>`
+        + '</TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+    let resp = '';
+    try { resp = await postTallyXml(server, port, xml, 30000); } catch { return []; }
+    const out: TallyAddress[] = [];
+    const blocks = resp.match(/<LEDMULTIADDRESSLIST\.LIST>[\s\S]*?<\/LEDMULTIADDRESSLIST\.LIST>/gi) || [];
+    for (const b of blocks) {
+        const one = (tag: string) => { const m = b.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i')); return m ? m[1].trim() : ''; };
+        const name = one('ADDRESSNAME');
+        if (!name) continue;
+        const lines = [...(b.match(/<ADDRESS>([^<]*)<\/ADDRESS>/gi) || [])]
+            .map(s => s.replace(/<\/?ADDRESS>/gi, '').trim()).filter(Boolean);
+        out.push({
+            addressName: name, lines, linesAreComplete: true, state: one('STATE'), pincode: one('PINCODE'),
+            country: one('COUNTRY') || 'India', gstin: one('PARTYGSTIN') || undefined,
+            phone: one('PHONENUMBER') || undefined, email: one('EMAIL') || undefined,
+        });
+    }
+    return out;
 }
 
 /** Ensure a STOCK GROUP (product category) exists, optionally nested under a parent group.
