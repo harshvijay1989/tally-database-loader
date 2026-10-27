@@ -1,7 +1,7 @@
 import { loadMappings, applyMapping } from './sfMapping.mjs';
 import { sfQuery, sfUpdate, sfUpsert, sfInsert } from './sfClient.mjs';
 import { postVoucher, ensureLedger } from './tallyImport.mjs';
-import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId } from './tallyMaster.mjs';
+import { ensureStockItem, readStockItemKeys, resolveDefaultGodown, upsertLedgerWithSapId, upsertStockItemWithSapId, upsertGodown } from './tallyMaster.mjs';
 import { addressFromSf, ledgerProfileFromSf, resolveProductUnit, ensureProductStockGroups } from './sfMaster.mjs';
 import { loadOrgMapping, orgMappingSourceFields, buildMappedRecord } from './sfOrgMapping.mjs';
 import { computeGstEntries, ensureGstLedgers, loadGstConfig, loadProductGstRates, loadDistributorState, loadPartyStates } from './gst.mjs';
@@ -393,6 +393,8 @@ const soqlEsc = (s) => String(s == null ? '' : s).replace(/'/g, "\\'");
 /** Stock groups already ensured this process — the voucher-time path hits the same categories
  *  repeatedly (one voucher per order, same products), so this keeps it to one create per group. */
 const stockGroupsDone = new Set();
+/** Godowns already ensured this process — avoids one Tally round-trip per voucher per warehouse. */
+const godownsEnsured = new Set();
 /** SELECT `fields` from `object`, falling back to `safeFields` if the wide query fails. The wide
  *  field list is driven by org metadata, so a single renamed/unreadable field there must not break
  *  master creation — we degrade to the minimal set and carry on. Returns the first row, or null. */
@@ -749,6 +751,24 @@ export async function syncToTally(spec, acct, server, port, opts = {}) {
             for (const inv of (built.inventoryEntries || []))
                 if (!masterErr && !(await ensureStockItemRich(acct, server, port, inv.stockItem, inv.unit, inv.productSapId || '', log)))
                     masterErr = `stock item '${inv.stockItem}' is missing and could not be created`;
+            // Godowns referenced by stock lines. Tally REJECTS a batch allocation naming a godown
+            // that does not exist, so an invoice whose warehouse had not been synced yet would fail
+            // even though every other master was auto-created. (Order vouchers emit no allocation,
+            // so they were unaffected — which is why this only showed up on invoices.)
+            const godowns = new Set((built.inventoryEntries || []).map(i => (i.godown || '').trim()).filter(Boolean));
+            for (const g of godowns) {
+                if (masterErr)
+                    break;
+                if (godownsEnsured.has(g))
+                    continue;
+                const w = await upsertGodown(server, port, g, '', { log });
+                if (w.ok) {
+                    godownsEnsured.add(g);
+                    log(`  godown '${g}' ensured for this voucher`);
+                }
+                else
+                    masterErr = `godown '${g}' is missing and could not be created — ${w.message}`;
+            }
         }
         if (masterErr) {
             res.failed++;
