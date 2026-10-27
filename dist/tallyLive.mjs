@@ -47,8 +47,37 @@ export function buildFetchXmlFiltered(tallyType, fetchList, filterFormula, opts 
     return base
         .replace(`<FETCH>${fetchList}</FETCH></COLLECTION>`, `<FETCH>${fetchList}</FETCH><FILTER>pgflt</FILTER></COLLECTION><SYSTEM TYPE="Formula" NAME="pgflt">${filterFormula}</SYSTEM>`);
 }
-/** POST an XML payload to Tally using the UTF-16LE transport (same as tally.mts). */
+// Tally is a single-threaded desktop application, not a server: it answers one request at a time
+// and a rapid burst can leave it unresponsive until it is restarted. Posting ONE invoice can need
+// 15-25 round-trips (party ledger, each stock item, its unit, the godown, the voucher, the GUID
+// read-back) — exactly the kind of burst that wedges it, observed repeatedly against live Tally.
+//
+// Every request in the process is therefore SERIALISED through one queue with a minimum gap
+// between them. Nothing is dropped and no caller has to care: a cycle takes slightly longer and
+// Tally stays responsive. Tune with TALLY_MIN_GAP_MS.
+const TALLY_MIN_GAP_MS = Number(process.env.TALLY_MIN_GAP_MS || 120);
+let _tallyQueue = Promise.resolve();
+let _lastTallyCallAt = 0;
+/** POST an XML payload to Tally, serialised and paced (see TALLY_MIN_GAP_MS). */
 export function postTallyXml(server, port, msg, timeoutMs = 20000) {
+    const run = async () => {
+        const since = Date.now() - _lastTallyCallAt;
+        if (since < TALLY_MIN_GAP_MS)
+            await new Promise(r => setTimeout(r, TALLY_MIN_GAP_MS - since));
+        try {
+            return await postTallyXmlRaw(server, port, msg, timeoutMs);
+        }
+        finally {
+            _lastTallyCallAt = Date.now();
+        }
+    };
+    // Chain onto the queue; keep the queue alive even when a call rejects.
+    const result = _tallyQueue.then(run, run);
+    _tallyQueue = result.then(() => undefined, () => undefined);
+    return result;
+}
+/** The actual transport. Use postTallyXml instead — it paces calls so Tally stays responsive. */
+function postTallyXmlRaw(server, port, msg, timeoutMs = 20000) {
     return new Promise((resolve, reject) => {
         try {
             const req = http.request({
